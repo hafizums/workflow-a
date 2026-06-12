@@ -16,6 +16,20 @@ async def fake_run_wavespeed_node(**kwargs):
     return {"outputs": [url]}, [url], [Asset(kind="image", filename=f"{node_id}.png", public_url=url)]
 
 
+def prompt_card_node(node_id: str = "node_prompt", text: str = "Test") -> CanvasNode:
+    return CanvasNode(id=node_id, type=NodeType.prompt_card, title="Prompt", inputs={"text": text})
+
+
+def prompted_image_project(node_id: str = "node_a", prompt_id: str = "node_prompt", text: str = "Test") -> Project:
+    return Project(
+        nodes=[
+            CanvasNode(id=node_id, type=NodeType.text_to_image, title="A"),
+            prompt_card_node(prompt_id, text),
+        ],
+        edges=[CanvasEdge(id=f"edge_{prompt_id}_{node_id}", source_node_id=prompt_id, target_node_id=node_id, target_input="prompt")],
+    )
+
+
 class RunManagerTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.project_ids: list[str] = []
@@ -33,9 +47,7 @@ class RunManagerTests(unittest.IsolatedAsyncioTestCase):
         return saved
 
     async def test_queue_node_job_transitions_to_success_and_writes_history(self):
-        project = await self.save_project(
-            Project(nodes=[CanvasNode(id="node_a", type=NodeType.text_to_image, title="A", inputs={"prompt": "Test"})])
-        )
+        project = await self.save_project(prompted_image_project())
         manager = LocalRunManager()
         job = await manager.queue_node_run(project.id, "node_a")
         self.assertEqual(job.status, "queued")
@@ -51,9 +63,7 @@ class RunManagerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(persisted.runs[0]["status"], "success")
 
     async def test_queued_job_can_be_cancelled(self):
-        project = await self.save_project(
-            Project(nodes=[CanvasNode(id="node_a", type=NodeType.text_to_image, title="A", inputs={"prompt": "Test"})])
-        )
+        project = await self.save_project(prompted_image_project())
         manager = LocalRunManager()
         job = await manager.queue_node_run(project.id, "node_a")
         cancelled = await manager.cancel_job(job.id)
@@ -65,10 +75,16 @@ class RunManagerTests(unittest.IsolatedAsyncioTestCase):
         project = await self.save_project(
             Project(
                 nodes=[
-                    CanvasNode(id="node_a", type=NodeType.text_to_image, title="A", inputs={"prompt": "A"}, output_urls=["https://example.com/a.png"]),
-                    CanvasNode(id="node_b", type=NodeType.image_to_image, title="B", inputs={"prompt": "B"}),
+                    CanvasNode(id="node_a", type=NodeType.text_to_image, title="A", output_urls=["https://example.com/a.png"]),
+                    CanvasNode(id="node_b", type=NodeType.image_to_image, title="B"),
+                    prompt_card_node("node_prompt_a", "A"),
+                    prompt_card_node("node_prompt_b", "B"),
                 ],
-                edges=[CanvasEdge(id="edge_ab", source_node_id="node_a", target_node_id="node_b", target_input="image")],
+                edges=[
+                    CanvasEdge(id="edge_prompt_a", source_node_id="node_prompt_a", target_node_id="node_a", target_input="prompt"),
+                    CanvasEdge(id="edge_prompt_b", source_node_id="node_prompt_b", target_node_id="node_b", target_input="prompt"),
+                    CanvasEdge(id="edge_ab", source_node_id="node_a", target_node_id="node_b", target_input="image"),
+                ],
             )
         )
         manager = LocalRunManager()
@@ -89,9 +105,7 @@ class RunManagerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(node_b.status, "skipped")
 
     async def test_failed_job_can_be_retried_with_new_id(self):
-        project = await self.save_project(
-            Project(nodes=[CanvasNode(id="node_a", type=NodeType.text_to_image, title="A", inputs={"prompt": "Test"})])
-        )
+        project = await self.save_project(prompted_image_project())
         manager = LocalRunManager()
         job = await manager.queue_node_run(project.id, "node_a")
         job.status = "error"
@@ -101,9 +115,8 @@ class RunManagerTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_cost_guard_blocked_node_is_not_queued(self):
         project = await self.save_project(
-            Project(
-                nodes=[CanvasNode(id="node_a", type=NodeType.text_to_image, title="A", inputs={"prompt": "Test"})],
-                settings=ProjectSettings(cost_guard=CostGuardSettings(enabled=True, block_at_usd_per_run=0.001)),
+            prompted_image_project().model_copy(
+                update={"settings": ProjectSettings(cost_guard=CostGuardSettings(enabled=True, block_at_usd_per_run=0.001))}
             )
         )
         manager = LocalRunManager()
@@ -115,10 +128,16 @@ class RunManagerTests(unittest.IsolatedAsyncioTestCase):
         project = await self.save_project(
             Project(
                 nodes=[
-                    CanvasNode(id="node_a", type=NodeType.text_to_image, title="A", inputs={"prompt": "A"}, output_urls=["https://example.com/a.png"]),
-                    CanvasNode(id="node_b", type=NodeType.image_to_image, title="B", inputs={"prompt": "B"}),
+                    CanvasNode(id="node_a", type=NodeType.text_to_image, title="A", output_urls=["https://example.com/a.png"]),
+                    CanvasNode(id="node_b", type=NodeType.image_to_image, title="B"),
+                    prompt_card_node("node_prompt_a", "A"),
+                    prompt_card_node("node_prompt_b", "B"),
                 ],
-                edges=[CanvasEdge(id="edge_ab", source_node_id="node_a", target_node_id="node_b", target_input="image")],
+                edges=[
+                    CanvasEdge(id="edge_prompt_a", source_node_id="node_prompt_a", target_node_id="node_a", target_input="prompt"),
+                    CanvasEdge(id="edge_prompt_b", source_node_id="node_prompt_b", target_node_id="node_b", target_input="prompt"),
+                    CanvasEdge(id="edge_ab", source_node_id="node_a", target_node_id="node_b", target_input="image"),
+                ],
             )
         )
         manager = LocalRunManager()
@@ -127,9 +146,7 @@ class RunManagerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(job.node_ids, ["node_a", "node_b"])
 
     async def test_list_jobs_filters_and_clear_completed_only_terminal_jobs(self):
-        project = await self.save_project(
-            Project(nodes=[CanvasNode(id="node_a", type=NodeType.text_to_image, title="A", inputs={"prompt": "Test"})])
-        )
+        project = await self.save_project(prompted_image_project())
         manager = LocalRunManager()
         queued = await manager.queue_node_run(project.id, "node_a")
         done = RunJob(project_id=project.id, kind="single_node", status="success", node_ids=["node_done"])

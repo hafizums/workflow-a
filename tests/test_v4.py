@@ -88,14 +88,14 @@ class ProjectSettingsApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn("Unknown node type", response.json()["detail"])
 
-    def test_disabled_model_override_is_rejected(self):
+    def test_incompatible_audio_model_override_is_rejected(self):
         project = self.create_project()
         response = self.client.put(
             f"/api/projects/{project['id']}/settings",
-            json={"model_overrides": {"remove_object": "wavespeed-ai/z-image/turbo-inpaint"}},
+            json={"model_overrides": {"text_to_audio": "wavespeed-ai/openai-whisper"}},
         )
         self.assertEqual(response.status_code, 400)
-        self.assertIn("Disabled", response.json()["detail"])
+        self.assertIn("not registered for node type text_to_audio", response.json()["detail"])
 
     def test_incompatible_model_override_is_rejected(self):
         project = self.create_project()
@@ -123,11 +123,11 @@ class ProjectSettingsApiTests(unittest.TestCase):
     def test_full_project_update_validates_settings_overrides(self):
         project = self.create_project()
         project["settings"]["model_overrides"] = {
-            "remove_object": "wavespeed-ai/z-image/turbo-inpaint",
+            "text_to_audio": "wavespeed-ai/openai-whisper",
         }
         response = self.client.put(f"/api/projects/{project['id']}", json=project)
         self.assertEqual(response.status_code, 400)
-        self.assertIn("Disabled", response.json()["detail"])
+        self.assertIn("not registered for node type text_to_audio", response.json()["detail"])
 
     def test_cost_guard_blocks_single_run_estimate_above_max(self):
         project = self.create_project()
@@ -182,11 +182,17 @@ class ProjectSettingsApiTests(unittest.TestCase):
         project = self.create_project()
         project["nodes"] = [
             {
+                "id": "node_prompt",
+                "type": "prompt_card",
+                "title": "Prompt",
+                "inputs": {"text": "A studio product photo"},
+            },
+            {
                 "id": "node_image",
                 "type": "text_to_image",
                 "title": "Image",
                 "model_id": "wavespeed-ai/z-image/turbo",
-                "inputs": {"prompt": "A studio product photo"},
+                "inputs": {},
             },
             {
                 "id": "node_bg",
@@ -196,6 +202,7 @@ class ProjectSettingsApiTests(unittest.TestCase):
                 "inputs": {"image": "https://example.com/image.png"},
             },
         ]
+        project["edges"] = [{"id": "edge_prompt_image", "source_node_id": "node_prompt", "target_node_id": "node_image", "target_input": "prompt"}]
         project = self.save_project(project)
 
         response = self.client.get(f"/api/workflows/{project['id']}/plan?mode=whole_graph")
@@ -217,11 +224,17 @@ class ProjectSettingsApiTests(unittest.TestCase):
         }
         project["nodes"] = [
             {
+                "id": "node_prompt",
+                "type": "prompt_card",
+                "title": "Prompt",
+                "inputs": {"text": "A studio product photo"},
+            },
+            {
                 "id": "node_image",
                 "type": "text_to_image",
                 "title": "Image",
                 "model_id": "wavespeed-ai/z-image/turbo",
-                "inputs": {"prompt": "A studio product photo"},
+                "inputs": {},
             },
             {
                 "id": "node_bg",
@@ -231,6 +244,7 @@ class ProjectSettingsApiTests(unittest.TestCase):
                 "inputs": {"image": "https://example.com/image.png"},
             },
         ]
+        project["edges"] = [{"id": "edge_prompt_image", "source_node_id": "node_prompt", "target_node_id": "node_image", "target_input": "prompt"}]
         project = self.save_project(project)
 
         response = self.client.get(f"/api/workflows/{project['id']}/plan?mode=whole_graph")
@@ -251,11 +265,17 @@ class ProjectSettingsApiTests(unittest.TestCase):
         }
         project["nodes"] = [
             {
+                "id": "node_prompt",
+                "type": "prompt_card",
+                "title": "Prompt",
+                "inputs": {"text": "A studio product photo"},
+            },
+            {
                 "id": "node_image",
                 "type": "text_to_image",
                 "title": "Image",
                 "model_id": "wavespeed-ai/z-image/turbo",
-                "inputs": {"prompt": "A studio product photo"},
+                "inputs": {},
             },
             {
                 "id": "node_bg",
@@ -265,6 +285,7 @@ class ProjectSettingsApiTests(unittest.TestCase):
                 "inputs": {"image": "https://example.com/image.png"},
             },
         ]
+        project["edges"] = [{"id": "edge_prompt_image", "source_node_id": "node_prompt", "target_node_id": "node_image", "target_input": "prompt"}]
         project = self.save_project(project)
 
         response = self.client.post(f"/api/workflows/{project['id']}/run-all")

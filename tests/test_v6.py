@@ -54,10 +54,14 @@ class EdgeCompatibilityTests(unittest.TestCase):
                     id="node_video",
                     type=NodeType.image_to_video,
                     title="Video",
-                    inputs={"prompt": "Slow move", "image": "https://example.com/first.png"},
+                    inputs={"image": "https://example.com/first.png"},
                 ),
+                CanvasNode(id="node_prompt_start", type=NodeType.prompt_card, title="Start Prompt", inputs={"text": "Start image"}),
+                CanvasNode(id="node_prompt_video", type=NodeType.prompt_card, title="Video Prompt", inputs={"text": "Slow move"}),
             ],
             edges=[
+                CanvasEdge(id="edge_prompt_start", source_node_id="node_prompt_start", target_node_id="node_start", target_input="prompt"),
+                CanvasEdge(id="edge_prompt_video", source_node_id="node_prompt_video", target_node_id="node_video", target_input="prompt"),
                 CanvasEdge(
                     id="edge_last",
                     source_node_id="node_start",
@@ -103,15 +107,19 @@ class EdgeCompatibilityTests(unittest.TestCase):
             nodes=[
                 CanvasNode(id="node_a", type=NodeType.text_to_image, title="A", output_urls=["https://example.com/a.png"]),
                 CanvasNode(id="node_b", type=NodeType.image_to_image, title="B"),
+                CanvasNode(id="node_prompt_a", type=NodeType.prompt_card, title="Prompt A", inputs={"text": "A"}),
+                CanvasNode(id="node_prompt_b", type=NodeType.prompt_card, title="Prompt B", inputs={"text": "B"}),
             ],
             edges=[
+                CanvasEdge(id="edge_prompt_a", source_node_id="node_prompt_a", target_node_id="node_a", target_input="prompt"),
+                CanvasEdge(id="edge_prompt_b", source_node_id="node_prompt_b", target_node_id="node_b", target_input="prompt"),
                 CanvasEdge(id="edge_one", source_node_id="node_a", target_node_id="node_b", target_input="image"),
                 CanvasEdge(id="edge_two", source_node_id="node_a", target_node_id="node_b", target_input="image"),
             ],
         )
         plan = build_workflow_plan(project)
         self.assertTrue(plan["ok"], plan["errors"])
-        self.assertEqual(len(plan["steps"][1]["incoming_edges"]), 2)
+        self.assertEqual(len(plan["steps"][1]["incoming_edges"]), 3)
 
     def test_export_import_clone_preserves_v6_edge_fields(self):
         project = Project(

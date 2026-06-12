@@ -23,6 +23,15 @@ class AssetKind(str, Enum):
     other = "other"
 
 
+class ArtifactRole(str, Enum):
+    input = "input"
+    output = "output"
+    intermediate = "intermediate"
+    winner = "winner"
+    reference = "reference"
+    export = "export"
+
+
 class NodeType(str, Enum):
     upload_image = "upload_image"
     text_to_image = "text_to_image"
@@ -46,7 +55,20 @@ class NodeType(str, Enum):
     portrait_transfer = "portrait_transfer"
     image_to_3d = "image_to_3d"
     text_to_3d = "text_to_3d"
+    llm_text = "llm_text"
+    llm_vision = "llm_vision"
     generic_wavespeed = "generic_wavespeed"
+    prompt_card = "prompt_card"
+    style_card = "style_card"
+    character_card = "character_card"
+    asset_input = "asset_input"
+    asset_selector = "asset_selector"
+    compare_board = "compare_board"
+    variant_batch = "variant_batch"
+    reroute = "reroute"
+    note = "note"
+    group_frame = "group_frame"
+    export_package = "export_package"
 
 
 class NodeStatus(str, Enum):
@@ -68,6 +90,41 @@ class Asset(BaseModel):
     wavespeed_url: str | None = None
     created_at: datetime = Field(default_factory=utc_now)
     metadata: Dict[str, Any] = Field(default_factory=dict)
+    lineage: "ArtifactLineage" = Field(default_factory=lambda: ArtifactLineage())
+    view: "ArtifactViewState" = Field(default_factory=lambda: ArtifactViewState())
+    versions: List["ArtifactVersion"] = Field(default_factory=list)
+
+
+class ArtifactLineage(BaseModel):
+    source_project_id: str | None = None
+    source_node_id: str | None = None
+    source_run_id: str | None = None
+    source_job_id: str | None = None
+    source_model_id: str | None = None
+    source_artifact_ids: List[str] = Field(default_factory=list)
+    source_input_keys: Dict[str, Any] = Field(default_factory=dict)
+    created_by: str = "system"
+
+
+class ArtifactVersion(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("version"))
+    artifact_id: str
+    created_at: datetime = Field(default_factory=utc_now)
+    url: str | None = None
+    text: str | None = None
+    json_value: Dict[str, Any] | List[Any] | None = None
+    filename: str | None = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class ArtifactViewState(BaseModel):
+    pinned: bool = False
+    role: ArtifactRole = ArtifactRole.intermediate
+    label: str = ""
+    notes: str = ""
+    rating: int | None = None
+    rejected: bool = False
+    favorite: bool = False
 
 
 class CanvasNode(BaseModel):
@@ -198,6 +255,9 @@ class Project(BaseModel):
     edges: List[CanvasEdge] = Field(default_factory=list)
     assets: List[Asset] = Field(default_factory=list)
     runs: List[Dict[str, Any]] = Field(default_factory=list)
+    variant_sets: List["VariantSet"] = Field(default_factory=list)
+    comparison_sets: List["ComparisonSet"] = Field(default_factory=list)
+    export_packages: List["ExportPackageManifest"] = Field(default_factory=list)
     settings: ProjectSettings = Field(default_factory=ProjectSettings)
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
@@ -215,6 +275,9 @@ class ProjectUpdate(BaseModel):
     edges: Optional[List[CanvasEdge]] = None
     assets: Optional[List[Asset]] = None
     runs: Optional[List[Dict[str, Any]]] = None
+    variant_sets: Optional[List["VariantSet"]] = None
+    comparison_sets: Optional[List["ComparisonSet"]] = None
+    export_packages: Optional[List["ExportPackageManifest"]] = None
     settings: Optional[ProjectSettings] = None
 
 
@@ -347,6 +410,118 @@ class ModelField(BaseModel):
     type: str
     required: bool = False
     default: Any = None
+    description: str = ""
+    options: List[Any] = Field(default_factory=list)
+    asset_kind: AssetKind | None = None
+    accept: str | None = None
+    min_value: float | None = None
+    max_value: float | None = None
+    step: float | None = None
+    placeholder: str | None = None
+
+
+class VariantParameter(BaseModel):
+    field: str
+    values: List[Any] = Field(default_factory=list)
+    strategy: Literal["list", "range", "seed", "prompt_suffix", "prompt_template"] = "list"
+
+
+class VariantRunRequest(BaseModel):
+    project_id: str
+    node_id: str
+    variant_count: int = 4
+    parameters: List[VariantParameter] = Field(default_factory=list)
+    save_to_project: bool = True
+    label: str = ""
+
+
+class VariantSet(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("variant"))
+    project_id: str
+    source_node_id: str
+    label: str = ""
+    status: str = "queued"
+    job_ids: List[str] = Field(default_factory=list)
+    artifact_ids: List[str] = Field(default_factory=list)
+    parameters: List[VariantParameter] = Field(default_factory=list)
+    errors: List[Dict[str, Any]] = Field(default_factory=list)
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+
+
+class ModelCompareRequest(BaseModel):
+    project_id: str
+    source_node_id: str
+    model_ids: List[str] = Field(default_factory=list)
+    output_kind: AssetKind | None = None
+    label: str = ""
+    save_to_project: bool = True
+
+
+class ComparisonSet(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("compare"))
+    project_id: str
+    source_node_id: str
+    label: str = ""
+    model_ids: List[str] = Field(default_factory=list)
+    job_ids: List[str] = Field(default_factory=list)
+    artifact_ids: List[str] = Field(default_factory=list)
+    winner_asset_id: str | None = None
+    status: str = "queued"
+    errors: List[Dict[str, Any]] = Field(default_factory=list)
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+
+
+class WorkflowRecipe(BaseModel):
+    id: str
+    name: str
+    description: str = ""
+    category: str = "workflow"
+    tags: List[str] = Field(default_factory=list)
+    required_capabilities: List[str] = Field(default_factory=list)
+    optional_capabilities: List[str] = Field(default_factory=list)
+    nodes: List[CanvasNode] = Field(default_factory=list)
+    edges: List[CanvasEdge] = Field(default_factory=list)
+    notes: List[str] = Field(default_factory=list)
+
+
+class ExportPackageArtifact(BaseModel):
+    asset_id: str
+    role: ArtifactRole = ArtifactRole.intermediate
+    kind: AssetKind = AssetKind.other
+    filename: str = ""
+    url: str | None = None
+    source_node_id: str | None = None
+    source_model_id: str | None = None
+    lineage: Dict[str, Any] = Field(default_factory=dict)
+
+
+class ExportPackageManifest(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("package"))
+    schema_name: str = Field(default="wavespeed_canvas_export_package", serialization_alias="schema")
+    version: int = 1
+    project_id: str
+    created_at: datetime = Field(default_factory=utc_now)
+    artifacts: List[ExportPackageArtifact] = Field(default_factory=list)
+
+
+class ArtifactRoleUpdate(BaseModel):
+    role: ArtifactRole
+
+
+class ArtifactRatingUpdate(BaseModel):
+    rating: int | None = None
+
+
+class BranchArtifactRequest(BaseModel):
+    target_node_type: NodeType
+    target_input_name: str | None = None
+    title: str | None = None
+
+
+class CreateProjectFromRecipeRequest(BaseModel):
+    name: str | None = None
     description: str = ""
 
 

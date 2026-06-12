@@ -2,11 +2,13 @@ from fastapi import APIRouter, HTTPException
 
 from app.core.config import get_settings
 from app.schemas import EstimateRunRequest, EstimateRunResponse, RunNodeRequest, RunNodeResponse
+from app.schemas import new_id
 from app.services import node_runner
 from app.services import project_store
 from app.services.cost_estimator import evaluate_cost_guard, get_estimated_base_cost
 from app.services.registry import resolve_model_for_node
 from app.services.wavespeed_adapter import WaveSpeedAdapter
+from app.services.workflow_resolver import build_graph, resolve_inputs_for_node, validate_prompt_card_inputs
 
 router = APIRouter(prefix="/api/runs", tags=["runs"])
 
@@ -64,6 +66,14 @@ async def run_node(payload: RunNodeRequest):
             target_node = next((node for node in project.nodes if node.id == payload.node_id), None)
             if target_node is None:
                 raise HTTPException(status_code=404, detail="Node not found in project")
+            graph = build_graph(project)
+            prompt_errors = validate_prompt_card_inputs(target_node, graph)
+            if prompt_errors:
+                raise HTTPException(status_code=400, detail=prompt_errors[0]["message"])
+            resolved_inputs, input_errors = resolve_inputs_for_node(target_node, graph, project)
+            if input_errors:
+                raise HTTPException(status_code=400, detail=input_errors[0]["message"])
+            payload.inputs = resolved_inputs
             node_runner.mark_node_running(target_node)
             await project_store.save_project(project)
 
@@ -124,12 +134,45 @@ async def run_node(payload: RunNodeRequest):
 
     asset_ids: list[str] = []
     if project:
+        run_id = new_id("run")
         for asset in output_assets:
+            asset.lineage.source_project_id = project.id
+            asset.lineage.source_node_id = target_node.id if target_node else payload.node_id
+            asset.lineage.source_run_id = run_id
+            asset.lineage.source_model_id = resolution.model_id
+            asset.lineage.source_input_keys = dict(payload.inputs or {})
+            asset.lineage.source_artifact_ids = [
+                value
+                for value in payload.inputs.values()
+                if isinstance(value, str) and any(existing.id == value for existing in project.assets)
+            ]
             project.assets.append(asset)
             asset_ids.append(asset.id)
 
         if target_node:
             node_runner.mark_node_success(target_node, resolution.model_id, raw_output, output_urls, asset_ids)
+        project.runs = [
+            {
+                "id": run_id,
+                "run_id": run_id,
+                "project_id": project.id,
+                "type": "single_node",
+                "status": "success",
+                "node_id": target_node.id if target_node else payload.node_id,
+                "model_id": resolution.model_id,
+                "model_display_name": resolution.model.label if resolution.model else None,
+                "input_snapshot": dict(payload.inputs or {}),
+                "resolved_input_snapshot": dict(payload.inputs or {}),
+                "output_artifact_ids": asset_ids,
+                "asset_ids": asset_ids,
+                "output_urls": output_urls,
+                "raw_output_summary": {"output_url_count": len(output_urls), "keys": sorted(raw_output.keys())[:20]},
+                "estimated_cost_snapshot": resolution.model.estimated_base_cost_usd if resolution.model else None,
+                "errors": [],
+                "warnings": [],
+            },
+            *(project.runs or []),
+        ][:100]
         await project_store.save_project(project)
 
     return RunNodeResponse(

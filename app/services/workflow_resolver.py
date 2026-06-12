@@ -7,6 +7,9 @@ from typing import Any
 from app.schemas import Asset, CanvasNode, Project
 from app.services.cost_estimator import ESTIMATE_WARNING, evaluate_cost_guard, evaluate_workflow_cost_guard
 from app.services.registry import resolve_model_for_node
+from app.services.utility_tools import UTILITY_NODE_TYPES, get_utility_tool
+
+PROMPT_CARD_ONLY_INPUTS = {"prompt", "text"}
 
 
 class WorkflowResolverError(Exception):
@@ -71,7 +74,7 @@ def build_workflow_plan(
 
     selected_ids = select_node_ids(graph, mode, node_id, project)
     ordered_ids = topological_sort(graph)
-    plan_ids = [current_id for current_id in ordered_ids if current_id in selected_ids]
+    plan_ids = [current_id for current_id in ordered_ids if current_id in selected_ids and is_runnable(graph.node_index[current_id], project)]
 
     steps = [
         build_step(index, graph.node_index[current_id], graph, project, warnings, errors)
@@ -106,12 +109,9 @@ def build_execution_plan(
         errors.append(error("cycle_detected", "Workflow graph contains a cycle.", {"node_ids": cycle}))
         return graph, [], warnings, errors
 
-    if mode == "whole_graph":
-        selected_ids = set(graph.node_index)
-    else:
-        selected_ids = select_node_ids(graph, mode, node_id, project)
+    selected_ids = select_node_ids(graph, mode, node_id, project)
     ordered_ids = topological_sort(graph)
-    return graph, [current_id for current_id in ordered_ids if current_id in selected_ids], warnings, errors
+    return graph, [current_id for current_id in ordered_ids if current_id in selected_ids and is_runnable(graph.node_index[current_id], project)], warnings, errors
 
 
 def resolve_inputs_for_node(
@@ -123,7 +123,7 @@ def resolve_inputs_for_node(
     resolved_inputs = dict(node.inputs or {})
     for edge in graph.incoming.get(node.id, []):
         source_node = graph.node_index[edge.source_node_id]
-        resolved_output = resolve_source_output(source_node, project)
+        resolved_output = resolve_source_output(source_node, project, target_input=edge.target_input)
         if resolved_output:
             resolved_inputs[edge.target_input] = resolved_output
         else:
@@ -139,6 +139,47 @@ def resolve_inputs_for_node(
                 )
             )
     return resolved_inputs, errors
+
+
+PROMPT_SOURCE_NODE_TYPES = {"prompt_card", "llm_text", "llm_vision", "speech_to_text"}
+
+
+def validate_prompt_card_inputs(node: CanvasNode, graph: Graph) -> list[dict[str, Any]]:
+    required_inputs = prompt_card_only_inputs_for_node(node)
+    if not required_inputs:
+        return []
+    incoming = graph.incoming.get(node.id, [])
+    errors: list[dict[str, Any]] = []
+    for input_name in required_inputs:
+        matching_edges = [edge for edge in incoming if edge.target_input == input_name]
+        if not matching_edges:
+            errors.append(
+                error(
+                    "prompt_card_required",
+                    f"{node.type.value}.{input_name} must come from a connected Prompt Card, LLM text, or transcript node.",
+                    {"node_id": node.id, "input": input_name},
+                )
+            )
+            continue
+        if not any(graph.node_index[edge.source_node_id].type.value in PROMPT_SOURCE_NODE_TYPES for edge in matching_edges):
+            errors.append(
+                error(
+                    "prompt_card_required",
+                    f"{node.type.value}.{input_name} is connected, but it must come from a Prompt Card, LLM text, or transcript node.",
+                    {"node_id": node.id, "input": input_name},
+                )
+            )
+    return errors
+
+
+def prompt_card_only_inputs_for_node(node: CanvasNode) -> set[str]:
+    if node.type in UTILITY_NODE_TYPES:
+        return set()
+    if node.type.value in {"text_to_image", "image_to_image", "reference_to_image", "remove_object", "image_to_video", "start_end_to_video", "text_to_video", "reference_to_video", "talking_avatar", "text_to_3d"}:
+        return {"prompt"}
+    if node.type.value in {"text_to_speech", "text_to_audio", "generate_voice", "llm_text", "llm_vision"}:
+        return {"text"}
+    return set()
 
 
 def build_graph(project: Project) -> Graph:
@@ -208,14 +249,22 @@ def normalize_edge(raw_edge: Any, index: int) -> NormalizedEdge:
 
 
 def default_target_input(node: CanvasNode) -> str:
-    if node.type.value in {"image_to_video", "image_to_image", "upscale_image", "remove_background", "remove_object"}:
+    if node.type.value in {"text_to_image", "text_to_video", "text_to_3d"}:
+        return "prompt"
+    if node.type.value in {"text_to_speech", "text_to_audio", "generate_voice", "llm_text", "llm_vision"}:
+        return "text"
+    if node.type.value in {"image_to_3d"}:
+        return "front_image_url"
+    if node.type.value in {"image_to_video", "image_to_image", "upscale_image", "remove_background", "remove_object", "portrait_transfer"}:
         return "image"
     if node.type.value in {"start_end_to_video"}:
         return "image"
     if node.type.value in {"reference_to_image", "reference_to_video"}:
         return "reference_image"
-    if node.type.value in {"video_extend", "video_effect"}:
+    if node.type.value in {"video_extend"}:
         return "video"
+    if node.type.value in {"video_effect"}:
+        return "image"
     if node.type.value in {"speech_to_text", "lip_sync"}:
         return "audio"
     return "input"
@@ -301,19 +350,22 @@ def build_step(
     warnings: list[dict[str, Any]],
     errors: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    resolution = resolve_model_for_node(
-        node_type=node.type,
-        node_model_id=node.model_id,
-        project_model_overrides=project.settings.model_overrides,
-    )
-    model = resolution.model
+    utility_model = get_utility_tool(node.type)
+    resolution = None
+    if utility_model is None:
+        resolution = resolve_model_for_node(
+            node_type=node.type,
+            node_model_id=node.model_id,
+            project_model_overrides=project.settings.model_overrides,
+        )
+    model = utility_model or resolution.model
     incoming_edges = graph.incoming.get(node.id, [])
     outgoing_edges = graph.outgoing.get(node.id, [])
     resolved_inputs = dict(node.inputs or {})
 
     for edge in incoming_edges:
         source_node = graph.node_index[edge.source_node_id]
-        resolved_output = resolve_source_output(source_node, project)
+        resolved_output = resolve_source_output(source_node, project, target_input=edge.target_input)
         if resolved_output:
             resolved_inputs[edge.target_input] = resolved_output
         else:
@@ -330,7 +382,13 @@ def build_step(
             )
 
     status = "ready"
-    if resolution.error:
+    prompt_errors = validate_prompt_card_inputs(node, graph)
+    if prompt_errors:
+        status = "skipped"
+        errors.extend(prompt_errors)
+    elif node.type in UTILITY_NODE_TYPES:
+        status = "utility"
+    elif resolution and resolution.error:
         status = "skipped"
         warnings.append(
             warning(
@@ -356,12 +414,12 @@ def build_step(
         "index": index,
         "node_id": node.id,
         "node_type": node.type.value,
-        "model_id": resolution.model_id,
-        "effective_model_id": resolution.model_id,
+        "model_id": resolution.model_id if resolution else None,
+        "effective_model_id": resolution.model_id if resolution else None,
         "node_model_id": node.model_id,
         "project_override_model_id": project.settings.model_overrides.get(node.type.value),
         "catalog_default_model_id": model.default_model_id if model else None,
-        "model_source": resolution.source,
+        "model_source": resolution.source if resolution else "utility",
         "estimated_base_cost_usd": model.estimated_base_cost_usd if model else None,
         "cost_unit": model.cost_unit if model else None,
         "pricing_note": model.pricing_note if model else None,
@@ -385,9 +443,17 @@ def build_step(
     }
 
 
-def resolve_source_output(node: CanvasNode, project: Project) -> str | None:
+def resolve_source_output(node: CanvasNode, project: Project, target_input: str | None = None) -> str | None:
+    utility_output = resolve_utility_output(node, project, target_input=target_input)
+    if utility_output:
+        return utility_output
+
     if node.output_urls:
         return node.output_urls[0]
+
+    text_output = node.last_run.get("text_output") if isinstance(node.last_run, dict) else None
+    if isinstance(text_output, str) and text_output.strip():
+        return text_output.strip()
 
     data = getattr(node, "data", None)
     if isinstance(data, dict):
@@ -402,8 +468,10 @@ def resolve_source_output(node: CanvasNode, project: Project) -> str | None:
     if isinstance(outputs, dict) and outputs.get("image"):
         return outputs["image"]
 
-    if node.type.value == "upload_image" and node.inputs.get("image"):
-        return node.inputs["image"]
+    if node.type.value == "upload_image":
+        for input_name in ("asset_url", "image", "audio", "video"):
+            if node.inputs.get(input_name):
+                return node.inputs[input_name]
 
     if node.output_asset_ids:
         asset = find_asset(project.assets, node.output_asset_ids[0])
@@ -413,11 +481,53 @@ def resolve_source_output(node: CanvasNode, project: Project) -> str | None:
     return None
 
 
+def resolve_utility_output(node: CanvasNode, project: Project, target_input: str | None = None) -> str | None:
+    if node.type.value == "prompt_card":
+        if target_input == "negative_prompt":
+            return str(node.inputs.get("negative_prompt") or "").strip() or None
+        return str(node.inputs.get("text") or "").strip() or None
+    if node.type.value == "style_card":
+        parts = [
+            node.inputs.get("visual_style"),
+            node.inputs.get("camera"),
+            node.inputs.get("lighting"),
+            node.inputs.get("color_palette"),
+            node.inputs.get("mood"),
+            node.inputs.get("quality_rules"),
+        ]
+        return ", ".join(str(part).strip() for part in parts if str(part or "").strip()) or None
+    if node.type.value == "character_card":
+        parts = [
+            node.inputs.get("name"),
+            node.inputs.get("description"),
+            node.inputs.get("appearance"),
+            node.inputs.get("consistency_notes"),
+        ]
+        return ". ".join(str(part).strip() for part in parts if str(part or "").strip()) or None
+    if node.type.value == "asset_input":
+        asset_id = str(node.inputs.get("asset_id") or "").strip()
+        asset = find_asset(project.assets, asset_id) if asset_id else None
+        if asset:
+            return asset.id
+        return asset_id or None
+    if node.type.value == "asset_selector":
+        return str(node.inputs.get("selected_asset_id") or "").strip() or None
+    if node.type.value == "reroute":
+        for key in ("value", "image", "video", "audio", "prompt", "asset_id"):
+            if node.inputs.get(key):
+                return str(node.inputs[key])
+    if node.type.value in {"compare_board", "export_package"} and node.inputs.get("selected_asset_id"):
+        return str(node.inputs["selected_asset_id"])
+    return None
+
+
 def find_asset(assets: list[Asset], asset_id: str) -> Asset | None:
     return next((asset for asset in assets if asset.id == asset_id), None)
 
 
 def is_runnable(node: CanvasNode, project: Project) -> bool:
+    if node.type in UTILITY_NODE_TYPES:
+        return False
     resolution = resolve_model_for_node(
         node_type=node.type,
         node_model_id=node.model_id,

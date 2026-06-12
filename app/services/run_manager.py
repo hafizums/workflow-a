@@ -9,8 +9,15 @@ from app.schemas import CanvasNode, NodeStatus, Project, RunJob, new_id
 from app.services import node_runner, project_store
 from app.services.cost_estimator import evaluate_cost_guard
 from app.services.registry import resolve_model_for_node
+from app.services.utility_tools import UTILITY_NODE_TYPES
 from app.services.wavespeed_adapter import WaveSpeedAdapter
-from app.services.workflow_resolver import build_execution_plan, build_workflow_plan, resolve_inputs_for_node
+from app.services.workflow_resolver import (
+    build_execution_plan,
+    build_graph,
+    build_workflow_plan,
+    resolve_inputs_for_node,
+    validate_prompt_card_inputs,
+)
 
 TERMINAL_STATUSES = {"success", "error", "cancelled"}
 ACTIVE_STATUSES = {"queued", "running", "cancel_requested"}
@@ -66,12 +73,24 @@ class LocalRunManager:
             raise JobNotFoundError("Job not found")
         return job
 
-    async def queue_node_run(self, project_id: str, node_id: str, save_to_project: bool = True) -> RunJob:
+    async def queue_node_run(
+        self,
+        project_id: str,
+        node_id: str,
+        save_to_project: bool = True,
+        request_metadata: dict[str, Any] | None = None,
+    ) -> RunJob:
         project = await project_store.load_project(project_id)
         node = find_node(project, node_id)
         if node is None:
             raise RunManagerError("Node not found in project")
+        if node.type in UTILITY_NODE_TYPES:
+            raise RunManagerError("Utility nodes are local-only and do not run directly. Connect this node to a runnable WaveSpeed node and run the downstream node or graph.")
         self._assert_no_active_node_job(project_id, node_id)
+        graph = build_graph(project)
+        prompt_errors = validate_prompt_card_inputs(node, graph)
+        if prompt_errors:
+            raise RunManagerError(prompt_errors[0]["message"])
         resolution = resolve_model_for_node(
             node_type=node.type,
             node_model_id=node.model_id,
@@ -95,7 +114,16 @@ class LocalRunManager:
             kind="single_node",
             node_id=node_id,
             mode="selected",
-            request={"project_id": project_id, "node_id": node_id, "save_to_project": save_to_project},
+            request={
+                "project_id": project_id,
+                "node_id": node_id,
+                "save_to_project": save_to_project,
+                "model_id": resolution.model_id,
+                "model_display_name": resolution.model.label if resolution.model else None,
+                "estimated_cost_snapshot": resolution.model.estimated_base_cost_usd if resolution.model else None,
+                "input_snapshot": dict(node.inputs or {}),
+                **(request_metadata or {}),
+            },
             progress_total=1,
             node_ids=[node_id],
             warnings=[],
@@ -120,6 +148,8 @@ class LocalRunManager:
         _graph, node_ids, warnings, errors = build_execution_plan(project=project, mode=mode, node_id=node_id)
         if errors:
             raise RunManagerError({"ok": False, "errors": errors, "warnings": warnings})
+        if not node_ids:
+            raise RunManagerError("No runnable WaveSpeed nodes were selected. Utility nodes are local-only and only feed connected model nodes.")
         for planned_node_id in node_ids:
             node = find_node(project, planned_node_id)
             if node:
@@ -235,8 +265,16 @@ class LocalRunManager:
         node = find_node(project, job.node_id or "")
         if node is None:
             raise RunManagerError("Node not found in project")
+        graph = build_graph(project)
+        prompt_errors = validate_prompt_card_inputs(node, graph)
+        if prompt_errors:
+            raise RunManagerError(prompt_errors[0]["message"])
+        resolved_inputs, input_errors = resolve_inputs_for_node(node, graph, project)
+        if input_errors:
+            job.errors.extend(input_errors)
+            raise RunManagerError(input_errors[0]["message"])
         job.current_node_id = node.id
-        await self._execute_single_node(project, node, job)
+        await self._execute_single_node(project, node, job, resolved_inputs=resolved_inputs)
         job.progress_current = 1
         await project_store.save_project(project)
 
@@ -256,6 +294,10 @@ class LocalRunManager:
                 return
             node = graph.node_index[node_id]
             job.current_node_id = node.id
+            prompt_errors = validate_prompt_card_inputs(node, graph)
+            if prompt_errors:
+                job.errors.extend(prompt_errors)
+                raise RunManagerError(prompt_errors[0]["message"])
             resolved_inputs, input_errors = resolve_inputs_for_node(node, graph, project)
             if input_errors:
                 job.errors.extend(input_errors)
@@ -297,10 +339,23 @@ class LocalRunManager:
         )
         node_asset_ids: list[str] = []
         for asset in output_assets:
+            asset.lineage.source_project_id = project.id
+            asset.lineage.source_job_id = job.id
+            asset.lineage.source_run_id = job.id
+            asset.lineage.source_node_id = node.id
+            asset.lineage.source_model_id = resolution.model_id
+            asset.lineage.source_input_keys = dict(resolved_inputs if resolved_inputs is not None else node.inputs or {})
+            asset.lineage.source_artifact_ids = collect_source_artifact_ids(project, asset.lineage.source_input_keys)
             project.assets.append(asset)
             job.asset_ids.append(asset.id)
             node_asset_ids.append(asset.id)
         job.output_urls.extend(output_urls)
+        job.request["model_id"] = resolution.model_id
+        job.request["model_display_name"] = resolution.model.label
+        job.request["estimated_cost_snapshot"] = resolution.model.estimated_base_cost_usd
+        job.request["input_snapshot"] = dict(node.inputs or {})
+        job.request["resolved_input_snapshot"] = dict(resolved_inputs if resolved_inputs is not None else node.inputs or {})
+        job.request["raw_output_summary"] = summarize_raw_output(raw_output, output_urls)
         node_runner.mark_node_success(node, resolution.model_id, raw_output, output_urls, node_asset_ids)
 
     async def _mark_current_node_error(self, job: RunJob, message: str) -> None:
@@ -320,11 +375,37 @@ class LocalRunManager:
             project = await project_store.load_project(job.project_id)
         except project_store.ProjectStoreError:
             return
+        if job.request.get("variant_set_id"):
+            try:
+                from app.services.variant_runner import attach_variant_result
+
+                attach_variant_result(project, str(job.request["variant_set_id"]), job.id, job.asset_ids)
+            except Exception:
+                pass
+        if job.request.get("comparison_id"):
+            try:
+                from app.services.model_compare import attach_comparison_result
+
+                attach_comparison_result(project, str(job.request["comparison_id"]), job.id, job.asset_ids)
+            except Exception:
+                pass
+
         run = {
             "id": job.id,
             "job_id": job.id,
+            "project_id": job.project_id,
             "type": job.kind,
             "status": job.status,
+            "node_id": job.node_id,
+            "run_id": job.id,
+            "model_id": job.request.get("model_id"),
+            "model_display_name": job.request.get("model_display_name"),
+            "model_version": job.request.get("model_version"),
+            "input_snapshot": job.request.get("input_snapshot") or job.request,
+            "resolved_input_snapshot": job.request.get("resolved_input_snapshot") or {},
+            "output_artifact_ids": job.asset_ids,
+            "raw_output_summary": job.request.get("raw_output_summary") or {"output_url_count": len(job.output_urls)},
+            "estimated_cost_snapshot": job.request.get("estimated_cost_snapshot"),
             "started_at": job.started_at.isoformat() if job.started_at else None,
             "finished_at": job.finished_at.isoformat() if job.finished_at else None,
             "cancelled_at": job.cancelled_at.isoformat() if job.cancelled_at else None,
@@ -404,3 +485,23 @@ def utc_now() -> datetime:
 
 
 run_manager = LocalRunManager()
+
+
+def collect_source_artifact_ids(project: Project, inputs: dict[str, Any]) -> list[str]:
+    known_ids = {asset.id for asset in project.assets}
+    found: list[str] = []
+    for value in inputs.values():
+        candidates = value if isinstance(value, list) else [value]
+        for candidate in candidates:
+            if isinstance(candidate, str) and candidate in known_ids and candidate not in found:
+                found.append(candidate)
+    return found
+
+
+def summarize_raw_output(raw_output: dict[str, Any], output_urls: list[str]) -> dict[str, Any]:
+    return {
+        "keys": sorted(raw_output.keys())[:20] if isinstance(raw_output, dict) else [],
+        "output_url_count": len(output_urls),
+        "has_text": bool(raw_output.get("text")) if isinstance(raw_output, dict) else False,
+        "has_json": bool(raw_output.get("json")) if isinstance(raw_output, dict) else False,
+    }

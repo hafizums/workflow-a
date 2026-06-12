@@ -11,7 +11,7 @@ from app.services import project_store
 from app.services.cost_estimator import evaluate_cost_guard
 from app.services.registry import resolve_model_for_node
 from app.services.wavespeed_adapter import WaveSpeedAdapter
-from app.services.workflow_resolver import build_execution_plan, build_workflow_plan, resolve_inputs_for_node
+from app.services.workflow_resolver import build_execution_plan, build_workflow_plan, resolve_inputs_for_node, validate_prompt_card_inputs
 
 router = APIRouter(prefix="/api/workflows", tags=["workflows"])
 
@@ -93,6 +93,21 @@ async def execute_workflow(project: Project, run_type: str, mode: str, node_id: 
     graph, node_ids, warnings, errors = build_execution_plan(project=project, mode=mode, node_id=node_id)
     if errors:
         raise HTTPException(status_code=400, detail={"ok": False, "errors": errors, "warnings": warnings})
+    if not node_ids:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "ok": False,
+                "errors": [
+                    {
+                        "code": "no_runnable_nodes",
+                        "message": "No runnable WaveSpeed nodes were selected. Utility nodes are local-only and only feed connected model nodes.",
+                        "details": {"mode": mode, "node_id": node_id},
+                    }
+                ],
+                "warnings": warnings,
+            },
+        )
 
     run = create_run(run_type, node_ids, warnings)
     append_run(project, run)
@@ -135,6 +150,15 @@ async def execute_workflow(project: Project, run_type: str, mode: str, node_id: 
                 else "Skipped because this node is not backed by an enabled model."
             )
             continue
+        prompt_errors = validate_prompt_card_inputs(node, graph)
+        if prompt_errors:
+            message = prompt_errors[0]["message"]
+            node_runner.mark_node_error(node, message)
+            run["status"] = "error"
+            run["finished_at"] = utc_iso()
+            run["errors"].extend(prompt_errors)
+            await project_store.save_project(project)
+            return workflow_run_response(False, project, run)
         node.estimated_base_cost_usd = resolution.model.estimated_base_cost_usd
         guard = evaluate_cost_guard(resolution.model.estimated_base_cost_usd, project.settings.cost_guard)
         if guard["blocked"]:
@@ -189,6 +213,16 @@ async def execute_workflow(project: Project, run_type: str, mode: str, node_id: 
 
         node_asset_ids: list[str] = []
         for asset in node_output_assets:
+            asset.lineage.source_project_id = project.id
+            asset.lineage.source_run_id = run["id"]
+            asset.lineage.source_node_id = node.id
+            asset.lineage.source_model_id = resolution.model_id
+            asset.lineage.source_input_keys = dict(resolved_inputs or {})
+            asset.lineage.source_artifact_ids = [
+                value
+                for value in resolved_inputs.values()
+                if isinstance(value, str) and any(existing.id == value for existing in project.assets)
+            ]
             project.assets.append(asset)
             asset_ids.append(asset.id)
             node_asset_ids.append(asset.id)

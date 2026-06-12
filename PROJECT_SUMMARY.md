@@ -66,12 +66,21 @@ The app is intentionally not a professional editor. It does not include layers, 
 
 - `text_to_image`: `wavespeed-ai/z-image/turbo`
 - `image_to_image`: `wavespeed-ai/z-image-turbo/image-to-image`
+- `reference_to_image`: `wavespeed-ai/z-image-turbo/image-to-image`
 - `upscale_image`: `wavespeed-ai/image-upscaler`
 - `remove_background`: `wavespeed-ai/image-background-remover`
+- `remove_object`: `wavespeed-ai/z-image/turbo-inpaint`
 - `image_to_video`: `wavespeed-ai/wan-2.2/i2v-480p-ultra-fast`
+- `start_end_to_video`: `wavespeed-ai/wan-2.2/i2v-480p-ultra-fast`
+- `text_to_video`: `wavespeed-ai/wan-2.2/t2v-480p-ultra-fast`
 - `text_to_speech`: `wavespeed-ai/qwen3-tts/text-to-speech`
+- `speech_to_text`: `wavespeed-ai/openai-whisper`
+- `generate_voice`: `wavespeed-ai/qwen3-tts/voice-design`
+- `lip_sync`: `wavespeed-ai/latentsync`
+- `talking_avatar`: `wavespeed-ai/infinitetalk`
+- `text_to_3d`: `wavespeed-ai/hunyuan-3d-v3.1/text-to-3d-rapid`
 
-Disabled/planned catalog entries remain visible but non-runnable until their request parameters and product UX are verified.
+Disabled/planned catalog entries remain visible but non-runnable until their request parameters, response shapes, cost behavior, and product UX are verified.
 
 ## Project Settings
 
@@ -101,7 +110,7 @@ Cost values are local starting estimates only, not exact billing.
 - Add catalog-driven nodes from `/api/models`.
 - Search the node library and filter it by dynamic category chips.
 - Disabled planned nodes show as coming soon and cannot be added.
-- Upload image assets locally and optionally upload to WaveSpeed.
+- Upload image, audio, video, and other assets locally and optionally upload to WaveSpeed.
 - Drag node cards and save positions.
 - Drag from output handles to media input handles to create manual workflow edges.
 - See ghost connector lines while wiring nodes.

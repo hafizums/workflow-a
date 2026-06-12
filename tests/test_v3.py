@@ -39,6 +39,8 @@ class ModelCatalogTests(unittest.TestCase):
             "portrait_transfer",
             "image_to_3d",
             "text_to_3d",
+            "llm_text",
+            "llm_vision",
         }
         self.assertEqual(expected_node_types, set(CHEAPEST_MODEL_BY_NODE_TYPE))
 
@@ -56,13 +58,19 @@ class ModelCatalogTests(unittest.TestCase):
         for model in [item for item in MODELS if item.enabled]:
             with self.subTest(model_id=model.id):
                 self.assertFalse(model.id.startswith(("planned/", "TODO_")))
+                if model.node_type == NodeType.upload_image:
+                    continue
                 self.assertIsNotNone(model.default_model_id)
                 self.assertFalse(model.default_model_id.startswith("TODO_"))
 
     def test_existing_image_registry_entries_still_exist(self):
         model_ids = {model.id for model in MODELS}
+        node_types = {model.node_type for model in MODELS}
+        self.assertIn(NodeType.upload_image, node_types)
         self.assertIn("wavespeed-ai/z-image/turbo", model_ids)
         self.assertIn("wavespeed-ai/z-image-turbo/image-to-image", model_ids)
+        self.assertIn("deepseek/deepseek-v4-flash", model_ids)
+        self.assertIn("openai/gpt-5-nano", model_ids)
 
     def test_project_json_loads_without_settings(self):
         project = Project.model_validate(
@@ -83,18 +91,18 @@ class ApiTests(unittest.TestCase):
     def setUp(self):
         self.client = TestClient(app)
 
-    def test_disabled_model_cannot_run(self):
+    def test_incompatible_model_cannot_run(self):
         response = self.client.post(
             "/api/runs/node",
             json={
-                "node_type": "remove_object",
-                "model_id": "wavespeed-ai/z-image/turbo-inpaint",
-                "inputs": {"image": "https://example.com/a.png"},
+                "node_type": "text_to_image",
+                "model_id": "wavespeed-ai/qwen3-tts/text-to-speech",
+                "inputs": {"prompt": "ambient rain"},
                 "save_to_project": False,
             },
         )
         self.assertEqual(response.status_code, 400)
-        self.assertIn("Disabled", response.json()["detail"])
+        self.assertIn("not registered for node type text_to_image", response.json()["detail"])
 
     def test_unknown_catalog_node_type_returns_clear_404(self):
         response = self.client.get("/api/model-catalog/nope")

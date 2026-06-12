@@ -5,6 +5,8 @@ import os
 from pathlib import Path
 from typing import Any, Dict, List
 
+import httpx
+
 from app.core.config import Settings
 
 
@@ -69,6 +71,48 @@ class WaveSpeedAdapter:
         if not isinstance(uploaded_url, str) or not uploaded_url.startswith(("http://", "https://")):
             raise RuntimeError("WaveSpeed upload did not return a usable URL.")
         return uploaded_url
+
+    async def run_llm_chat(self, model_id: str, inputs: Dict[str, Any]) -> Dict[str, Any]:
+        self.require_api_key()
+        text = str(inputs.get("text") or "").strip()
+        if not text:
+            raise RuntimeError("text is required for LLM requests.")
+
+        image = str(inputs.get("image") or "").strip()
+        if image:
+            content: str | list[dict[str, Any]] = [
+                {"type": "text", "text": text},
+                {"type": "image_url", "image_url": {"url": image}},
+            ]
+        else:
+            content = text
+
+        payload = {
+            "model": model_id,
+            "messages": [{"role": "user", "content": content}],
+        }
+        headers = {
+            "Authorization": f"Bearer {os.environ.get('WAVESPEED_API_KEY')}",
+            "Content-Type": "application/json",
+        }
+        try:
+            async with httpx.AsyncClient(timeout=3600.0) as client:
+                response = await client.post(
+                    "https://llm.wavespeed.ai/v1/chat/completions",
+                    headers=headers,
+                    json=payload,
+                )
+                response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            detail = exc.response.text
+            raise RuntimeError(f"WaveSpeed LLM request failed for {model_id}: {detail}") from exc
+        except httpx.HTTPError as exc:
+            raise RuntimeError(f"WaveSpeed LLM request failed for {model_id}: {exc}") from exc
+
+        output = response.json()
+        if not isinstance(output, dict):
+            raise RuntimeError("WaveSpeed LLM returned an unexpected response type.")
+        return output
 
     @staticmethod
     def extract_output_urls(raw_output: Dict[str, Any]) -> List[str]:

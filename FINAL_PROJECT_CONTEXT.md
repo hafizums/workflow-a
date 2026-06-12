@@ -124,21 +124,29 @@ Build a simple AI canvas for composing generation workflows around WaveSpeed mod
 
 - `text_to_image`: `wavespeed-ai/z-image/turbo`, image output, verified. Required `prompt`; optional `size`, `seed`, `output_format`.
 - `image_to_image`: `wavespeed-ai/z-image-turbo/image-to-image`, image output, verified. Required `prompt` and `image`; optional `size`, `strength`, `seed`, `output_format`.
+- `reference_to_image`: `wavespeed-ai/z-image-turbo/image-to-image`, image output, verified. Required `reference_image` and `prompt`; runner maps `reference_image` to model `image`.
 - `upscale_image`: `wavespeed-ai/image-upscaler`, image output, verified. Required `image`; optional `target_resolution`, `output_format`; runner adds sync/base64 flags.
 - `remove_background`: `wavespeed-ai/image-background-remover`, image output, verified. Required `image`; runner adds sync/base64 flags.
+- `remove_object`: `wavespeed-ai/z-image/turbo-inpaint`, image output, verified. Requires `prompt`, `image`, and supplied `mask_image`.
 - `image_to_video`: `wavespeed-ai/wan-2.2/i2v-480p-ultra-fast`, video output, verified. Required `image` and `prompt`; optional `negative_prompt`, `duration`, `seed`, `last_image`.
+- `start_end_to_video`: `wavespeed-ai/wan-2.2/i2v-480p-ultra-fast`, video output, verified. Requires `image`, `last_image`, and `prompt`.
+- `text_to_video`: `wavespeed-ai/wan-2.2/t2v-480p-ultra-fast`, video output, verified. Requires `prompt`; optional `negative_prompt`, `size`, `duration`, `seed`.
 - `text_to_speech`: `wavespeed-ai/qwen3-tts/text-to-speech`, audio output, verified. Required `text`; optional `language`, `voice`, `style_instruction`.
+- `speech_to_text`: `wavespeed-ai/openai-whisper`, text output, verified. Requires `audio`; stores transcript in `last_run.text_output` when no media URL is returned.
+- `generate_voice`: `wavespeed-ai/qwen3-tts/voice-design`, audio output, verified. Requires `text` and `voice_description`.
+- `lip_sync`: `wavespeed-ai/latentsync`, video output, verified. Requires `video` and `audio`.
+- `talking_avatar`: `wavespeed-ai/infinitetalk`, video output, verified. Requires `image` and `audio`; optional `mask_image`, `prompt`, `resolution`, `seed`.
+- `text_to_3d`: `wavespeed-ai/hunyuan-3d-v3.1/text-to-3d-rapid`, other output, verified. Requires `prompt`.
 
 ## Planned/Disabled Model Categories
 
-- Image: `reference_to_image`, `remove_object`.
-- Video: `start_end_to_video`, `text_to_video`, `reference_to_video`, `video_extend`, `video_effect`.
-- Audio: `text_to_audio`, `speech_to_text`, `generate_voice`.
-- Avatar: `talking_avatar`, `lip_sync`, `portrait_transfer`.
-- 3D: `image_to_3d`, `text_to_3d`.
+- Video: `reference_to_video`, `video_extend`, `video_effect`.
+- Audio: `text_to_audio`.
+- Avatar: `portrait_transfer`.
+- 3D: `image_to_3d`.
 - System: `generic_wavespeed`.
 
-These categories are visible in the catalog as candidate, needs-params, disabled, or experimental. They are not executable unless `enabled=true` in the catalog and supported in `node_runner.py`.
+These categories are visible in the catalog as candidate, disabled, or experimental with specific reasons. They are not executable unless `enabled=true` in the catalog and supported by a node-type preparer in `node_runner.py`.
 
 ## TASK_V2 Summary
 
@@ -175,6 +183,10 @@ TASK_V7 is implemented. It added Local Run Manager v1 without Redis, Celery, a d
 ## TASK_V8 Summary
 
 TASK_V8 is implemented as an in-place vanilla UI upgrade. It renamed the visible product experience to WaveSpeed Studio v8, reorganized the static frontend into grouped command bars, added node library search and dynamic category filters, added canvas stats and a selection bar, converted the right inspector into Project/Workflow/Runs/Activity tabs, added toast notifications without replacing the Activity log, added keyboard shortcuts, improved empty states, and replaced the stylesheet with a polished dark studio theme. Existing FastAPI routes, local JSON storage, project data shape, V7 Run Manager behavior, and required DOM IDs remain preserved.
+
+## TASK_V9 Summary
+
+TASK_V9 is implemented and live dry-run verified: model fields now include V9 metadata, the runner uses node-type preparers instead of `SUPPORTED_MODEL_IDS`, asset resolution supports image/audio/video/other inputs, speech-to-text stores text-only outputs, generic upload handles audio/video/other files, and tests/fixtures/docs cover the newly enabled model batch. The V9 priority batch was dry-run against WaveSpeed after explicit credit-spend approval; an initial lip-sync run failed with a no-face sample video, then succeeded with a face-based talking-avatar video.
 
 ## Current Frontend Behavior
 

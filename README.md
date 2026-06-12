@@ -97,6 +97,12 @@ List local run-manager jobs:
 curl http://localhost:8000/api/jobs
 ```
 
+Run local tests:
+
+```bat
+python -m pytest
+```
+
 Run text-to-image from CMD:
 
 ```bat
@@ -128,11 +134,21 @@ The MVP supports:
 
 ## V8 UI upgrade
 
-V8 keeps the vanilla FastAPI/static frontend but reorganizes the interface into **WaveSpeed Studio v8**: a studio layout with grouped command bars, searchable node library, dynamic category filters, canvas stats, a selection strip, tabbed inspector, toast feedback, and safer keyboard shortcuts. Existing project, template, asset, workflow, and run-manager APIs remain unchanged.
+V8 was a UI organization pass. It keeps the vanilla FastAPI/static frontend but reorganizes the interface into **WaveSpeed Studio v8**: a studio layout with grouped command bars, searchable node library, dynamic category filters, canvas stats, a selection strip, tabbed inspector, toast feedback, and safer keyboard shortcuts. Existing project, template, asset, workflow, and run-manager APIs remain unchanged.
+
+## V9 model enablement
+
+V9 focuses on model enablement and media workflow functionality. The runner now uses node-type preparers from the registry instead of a tiny hardcoded model allowlist, and project assets can be image, audio, video, or other files.
+
+The upload node still uses the backward-compatible `upload_image` node type, but it now behaves as **Upload Asset** and accepts image, audio, video, 3D/archive, and text-like files. Localhost URLs are blocked for remote WaveSpeed inputs; upload local media to WaveSpeed first or use a public HTTPS URL.
+
+Mask-based models require a supplied mask image in V9. There is no brush, layer, or mask drawing editor.
+
+Some catalog nodes remain disabled until their request fields, response shapes, cost behavior, and product UX are verified.
 
 ## Important implementation notes
 
-Localhost file URLs are usually not reachable by remote AI APIs. For image-to-image or image-to-video nodes, use the upload endpoint with `upload_to_wavespeed=true`, then copy the returned `wavespeed_url` into the node input field.
+Localhost file URLs are usually not reachable by remote AI APIs. For image, audio, or video nodes, use the upload endpoint with `upload_to_wavespeed=true`, then copy the returned `wavespeed_url` into the node input field or select the uploaded asset in the node card.
 
 Enabled model IDs include:
 
@@ -142,10 +158,54 @@ wavespeed-ai/z-image-turbo/image-to-image
 wavespeed-ai/image-upscaler
 wavespeed-ai/image-background-remover
 wavespeed-ai/wan-2.2/i2v-480p-ultra-fast
+wavespeed-ai/wan-2.2/t2v-480p-ultra-fast
+wavespeed-ai/openai-whisper
 wavespeed-ai/qwen3-tts/text-to-speech
+wavespeed-ai/qwen3-tts/voice-design
+wavespeed-ai/latentsync
+wavespeed-ai/infinitetalk
+wavespeed-ai/hunyuan-3d-v3.1/text-to-3d-rapid
+wavespeed-ai/z-image/turbo-inpaint
 ```
 
-Other categories are represented as disabled or planned catalog entries until their request parameters and UX are verified.
+Enabled node types include text-to-image, image-to-image/remix, reference-to-image, upscale image, remove background, remove object/inpaint, image-to-video, start-end video, text-to-video, text-to-speech, speech-to-text, generate voice, lip sync, talking avatar, and text-to-3D.
+
+Disabled/planned node types remain visible with specific reasons: text-to-audio, reference-to-video, video-extend, video-effect, portrait-transfer, and image-to-3D.
+
+See `docs/V9_MODEL_ENABLEMENT.md` for curl examples for the new runnable models.
+Live dry-runs can be repeated with `python scripts/live_wavespeed_v9_smoke.py --confirm-spend-credits` after setting any required media URL environment variables documented there.
+
+## V10 Weave-style workflow layer
+
+V10 adds artifact lineage, utility nodes, variant batches, model comparison, winner promotion, branch-from-any-artifact, production recipes, export packages, and run snapshots. AI execution remains WaveSpeed-only; local utility nodes only orchestrate prompts, assets, selection, comparison, and export metadata.
+
+Useful V10 endpoints:
+
+```bat
+curl -X POST http://localhost:8000/api/projects/PROJECT_ID/nodes/NODE_ID/variants ^
+  -H "Content-Type: application/json" ^
+  -d "{\"project_id\":\"PROJECT_ID\",\"node_id\":\"NODE_ID\",\"variant_count\":4,\"parameters\":[{\"field\":\"seed\",\"strategy\":\"seed\",\"values\":[]}],\"save_to_project\":true}"
+```
+
+```bat
+curl -X POST http://localhost:8000/api/projects/PROJECT_ID/nodes/NODE_ID/compare-models ^
+  -H "Content-Type: application/json" ^
+  -d "{\"project_id\":\"PROJECT_ID\",\"source_node_id\":\"NODE_ID\",\"model_ids\":[],\"save_to_project\":true}"
+```
+
+```bat
+curl -X POST http://localhost:8000/api/projects/PROJECT_ID/artifacts/ASSET_ID/branch ^
+  -H "Content-Type: application/json" ^
+  -d "{\"target_node_type\":\"image_to_video\",\"target_input_name\":\"image\",\"title\":\"Animate winner\"}"
+```
+
+```bat
+curl -X POST http://localhost:8000/api/projects/PROJECT_ID/export-package ^
+  -H "Content-Type: application/json" ^
+  -d "{\"asset_ids\":[]}"
+```
+
+Recipes are available at `/api/recipes`, and the V10 parity/guardrail map is documented in `docs/V10_WEAVE_PARITY_MAP.md`.
 
 ## Portability
 

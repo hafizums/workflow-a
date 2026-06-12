@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>WaveSpeed Studio v8</title>
+  <title>WaveSpeed Studio v10</title>
   <link rel="icon" href="data:," />
   <link rel="stylesheet" href="/style.css" />
 </head>
@@ -13,7 +13,7 @@
       <section class="brand-block" aria-label="Application">
         <div class="brand-mark">WS</div>
         <div>
-          <strong>WaveSpeed Studio v8</strong>
+          <strong>WaveSpeed Studio v10</strong>
           <span class="muted">Vanilla AI workflow canvas</span>
         </div>
       </section>
@@ -35,6 +35,7 @@
 
       <section class="command-group workflow-command-group" aria-label="Workflow actions">
         <button id="templatesBtn" type="button">Templates</button>
+        <button id="recipesBtn" type="button">Recipes</button>
         <button id="saveTemplateBtn" type="button">Save Template</button>
         <button id="projectSettingsBtn" type="button">Settings</button>
       </section>
@@ -121,10 +122,19 @@
             <button type="button" id="runSelectedBtn">Run Selected</button>
             <button type="button" id="runFromSelectedBtn">Run From Selected</button>
             <button type="button" id="runWholeGraphBtn" class="primary-action">Run Whole Graph</button>
+            <button type="button" id="runVariantsSelectedBtn">Run Variants</button>
+            <button type="button" id="compareSelectedBtn">Compare Models</button>
+            <button type="button" id="exportPackageBtn">Export Package</button>
             <button type="button" id="refreshRunsBtn">Refresh Runs</button>
           </div>
           <h2>Workflow Plan</h2>
           <div id="workflowPlan" class="workflow-panel muted">No plan preview yet.</div>
+          <h2>Variant Sets</h2>
+          <div id="variantSets" class="workflow-panel muted">No variants yet.</div>
+          <h2>Comparisons</h2>
+          <div id="comparisonSets" class="workflow-panel muted">No comparisons yet.</div>
+          <h2>Export Packages</h2>
+          <div id="exportPackages" class="workflow-panel muted">No export packages yet.</div>
           <h2>Workflow Messages</h2>
           <div id="workflowMessages" class="workflow-panel muted">No workflow messages.</div>
         </section>
@@ -208,6 +218,20 @@
     </header>
     <div class="settings-content">
       <div id="templateList" class="template-list"></div>
+    </div>
+  </section>
+
+  <div id="recipesPanelBackdrop" class="settings-backdrop hidden"></div>
+  <section id="recipesPanel" class="settings-panel template-panel hidden" aria-label="Workflow recipes">
+    <header class="settings-header">
+      <div>
+        <h2>Recipes</h2>
+        <p class="muted">Production workflow starters using local utilities and enabled WaveSpeed models.</p>
+      </div>
+      <button type="button" id="closeRecipesBtn">Close</button>
+    </header>
+    <div class="settings-content">
+      <div id="recipeList" class="template-list"></div>
     </div>
   </section>
 

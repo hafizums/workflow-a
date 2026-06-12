@@ -5,7 +5,7 @@ import aiofiles
 from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 
 from app.core.config import get_settings
-from app.schemas import Asset, AssetKind
+from app.schemas import ArtifactRole, Asset, AssetKind
 from app.services.wavespeed_adapter import WaveSpeedAdapter
 
 router = APIRouter(prefix="/api/assets", tags=["assets"])
@@ -18,7 +18,7 @@ def infer_asset_kind(content_type: str | None, filename: str) -> AssetKind:
         return AssetKind.image
     if content_type.startswith("video/") or suffix in {".mp4", ".mov", ".webm", ".mkv"}:
         return AssetKind.video
-    if content_type.startswith("audio/") or suffix in {".mp3", ".wav", ".m4a", ".ogg"}:
+    if content_type.startswith("audio/") or suffix in {".mp3", ".wav", ".m4a", ".ogg", ".flac"}:
         return AssetKind.audio
     return AssetKind.other
 
@@ -52,6 +52,8 @@ async def upload_asset(request: Request, file: UploadFile = File(...), upload_to
         public_url=public_url,
         metadata={"stored_filename": safe_name, "size_bytes": total_bytes},
     )
+    asset.lineage.created_by = "upload"
+    asset.view.role = ArtifactRole.input
 
     if upload_to_wavespeed:
         try:

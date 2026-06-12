@@ -3,6 +3,7 @@ const state = {
   projects: [],
   models: [],
   templates: [],
+  recipes: [],
   jobs: [],
   jobStatusById: {},
   jobsPollingTimer: null,
@@ -12,6 +13,7 @@ const state = {
   workflowRunning: false,
   settingsOpen: false,
   templatesOpen: false,
+  recipesOpen: false,
   ui: {
     leftPanelCollapsed: false,
     rightPanelCollapsed: false,
@@ -23,30 +25,46 @@ const state = {
 
 const CARD_GAP_X = 330;
 const CARD_BRANCH_OFFSET_Y = 40;
-const MEDIA_INPUT_NAMES = ['image', 'reference_image', 'video', 'audio', 'last_image'];
+const MEDIA_INPUT_NAMES = ['image', 'reference_image', 'video', 'audio', 'last_image', 'mask_image'];
+const TEXT_INPUT_NAMES = [
+  'prompt',
+  'negative_prompt',
+  'text',
+  'style_instruction',
+  'voice_description',
+  'description',
+  'visual_style',
+  'quality_rules',
+  'negative_rules',
+];
+const PROMPT_CARD_ONLY_FIELDS = ['prompt', 'text'];
+const PROMPT_OPTIMIZER_STYLE_OPTIONS = ['default', 'artistic', 'photographic', 'technical', 'anime', 'realistic'];
+const PROMPT_OPTIMIZER_MODE_OPTIONS = ['image', 'video'];
+const UPLOAD_ACCEPT = 'image/*,video/*,audio/*,.glb,.gltf,.obj,.fbx,.stl,.usdz,.zip,.txt,.json,.srt,.vtt';
 const ACTIVE_JOB_STATUSES = ['queued', 'running', 'cancel_requested'];
 const FALLBACK_INPUT_HANDLES = {
   image_to_image: ['image'],
   upscale_image: ['image'],
   remove_background: ['image'],
-  remove_object: ['image'],
+  remove_object: ['image', 'mask_image'],
   image_to_video: ['image', 'last_image'],
   start_end_to_video: ['image', 'last_image'],
   speech_to_text: ['audio'],
-  lip_sync: ['image', 'audio'],
+  lip_sync: ['video', 'audio'],
   video_extend: ['video'],
-  video_effect: ['video'],
+  video_effect: ['image'],
   reference_to_image: ['reference_image'],
   reference_to_video: ['reference_image'],
+  llm_vision: ['image'],
 };
 
 const LOCAL_FALLBACK_NODE_DEFS = [
   {
     id: 'upload_image',
-    title: 'Upload Image',
+    title: 'Upload Asset',
     type: 'upload_image',
     category: 'input',
-    description: 'Add a local source image asset.',
+    description: 'Add a local source asset.',
     runnable: false,
     upload: true,
     enabled: true,
@@ -152,6 +170,14 @@ function nodeOutputAssets(node) {
 
 function imageAssets() {
   return (state.project?.assets || []).filter((asset) => asset.kind === 'image' && assetUrl(asset));
+}
+
+function assetsForField(field) {
+  const kind = field.asset_kind || '';
+  return (state.project?.assets || []).filter((asset) => {
+    if (!assetUrl(asset)) return false;
+    return !kind || kind === 'other' || asset.kind === kind;
+  });
 }
 
 async function loadModels() {
@@ -344,6 +370,26 @@ function closeTemplatesPanel() {
 
 async function loadTemplates() {
   state.templates = await api('/api/templates');
+}
+
+async function openRecipesPanel() {
+  state.recipesOpen = true;
+  try {
+    await loadRecipes();
+  } catch (error) {
+    log(error.message);
+    showToast(error.message, 'error');
+  }
+  renderRecipesPanel();
+}
+
+function closeRecipesPanel() {
+  state.recipesOpen = false;
+  renderRecipesPanel();
+}
+
+async function loadRecipes() {
+  state.recipes = await api('/api/recipes');
 }
 
 function renderTemplatesPanel() {
@@ -690,6 +736,7 @@ function allNodeDefs() {
 }
 
 function modelToNodeDef(model) {
+  const isUtility = model.category === 'utility' || String(model.id || '').startsWith('local/utility/');
   return {
     id: model.id,
     title: model.label,
@@ -697,7 +744,7 @@ function modelToNodeDef(model) {
     category: model.category,
     model_id: model.id,
     description: model.description,
-    runnable: model.enabled && model.node_type !== 'upload_image',
+    runnable: model.enabled && model.node_type !== 'upload_image' && !isUtility,
     enabled: model.enabled,
     upload: model.node_type === 'upload_image',
     output_kind: model.output_kind,
@@ -718,7 +765,7 @@ function defaultInputsFromFields(fields) {
     }
   });
   if (fields.some((field) => field.name === 'prompt') && !inputs.prompt) {
-    inputs.prompt = 'A clean modern product poster, studio lighting';
+    inputs.prompt = '';
   }
   return inputs;
 }
@@ -731,17 +778,101 @@ function costLabel(item) {
 }
 
 function outputKindFromNodeType(nodeType) {
-  if (['image_to_video', 'text_to_video', 'start_end_to_video', 'reference_to_video', 'video_extend', 'video_effect', 'talking_avatar', 'lip_sync', 'portrait_transfer'].includes(nodeType)) {
+  if (['image_to_video', 'text_to_video', 'start_end_to_video', 'reference_to_video', 'video_extend', 'video_effect', 'talking_avatar', 'lip_sync'].includes(nodeType)) {
     return 'video';
   }
-  if (['text_to_speech', 'text_to_audio'].includes(nodeType)) return 'audio';
-  if (['text_to_image', 'image_to_image', 'upload_image', 'reference_to_image', 'upscale_image', 'remove_background', 'remove_object'].includes(nodeType)) {
+  if (['text_to_speech', 'text_to_audio', 'generate_voice'].includes(nodeType)) return 'audio';
+  if (['text_to_image', 'image_to_image', 'reference_to_image', 'upscale_image', 'remove_background', 'remove_object', 'portrait_transfer'].includes(nodeType)) {
     return 'image';
   }
+  if (['llm_text', 'llm_vision'].includes(nodeType)) return 'text';
   return 'other';
 }
 
+function renderRecipesPanel() {
+  const panel = qs('#recipesPanel');
+  const backdrop = qs('#recipesPanelBackdrop');
+  if (!panel || !backdrop) return;
+  panel.classList.toggle('hidden', !state.recipesOpen);
+  backdrop.classList.toggle('hidden', !state.recipesOpen);
+  if (!state.recipesOpen) return;
+
+  const list = qs('#recipeList');
+  if (!state.recipes.length) {
+    list.innerHTML = '<div class="muted">No recipes found.</div>';
+    return;
+  }
+  list.innerHTML = state.recipes.map((recipe) => `
+    <article class="template-card">
+      <header>
+        <div>
+          <strong>${escapeHtml(recipe.name)}</strong>
+          <p>${escapeHtml(recipe.description || '')}</p>
+        </div>
+        <span class="badge ok">${escapeHtml(recipe.category || 'workflow')}</span>
+      </header>
+      <div class="badge-row">
+        <span class="badge">${Number(recipe.nodes?.length || 0)} nodes</span>
+        ${(recipe.tags || []).slice(0, 5).map((tag) => `<span class="badge">${escapeHtml(tag)}</span>`).join('')}
+      </div>
+      <div class="template-actions">
+        <button type="button" data-recipe-create="${attr(recipe.id)}">Create Project</button>
+        <button type="button" data-recipe-apply="${attr(recipe.id)}" ${state.project ? '' : 'disabled'}>Apply to Current</button>
+      </div>
+    </article>
+  `).join('');
+  list.querySelectorAll('[data-recipe-create]').forEach((button) => {
+    button.addEventListener('click', () => createProjectFromRecipe(button.dataset.recipeCreate));
+  });
+  list.querySelectorAll('[data-recipe-apply]').forEach((button) => {
+    button.addEventListener('click', () => applyRecipeToCurrentProject(button.dataset.recipeApply));
+  });
+}
+
+async function createProjectFromRecipe(recipeId) {
+  const recipe = state.recipes.find((item) => item.id === recipeId);
+  const name = window.prompt('New project name', recipe ? `${recipe.name} Project` : 'New Workflow');
+  if (name === null) return;
+  try {
+    const project = await api(`/api/recipes/${recipeId}/create-project`, {
+      method: 'POST',
+      body: JSON.stringify({ name: name || undefined }),
+    });
+    state.project = project;
+    state.selectedNodeId = null;
+    state.selectedEdgeId = null;
+    localStorage.setItem('wavespeed_canvas_project_id', state.project.id);
+    await refreshProjectList();
+    closeRecipesPanel();
+    renderAll();
+    log(`Created project from recipe: ${state.project.name}`);
+    showToast('Project created from recipe', 'success');
+  } catch (error) {
+    log(error.message);
+    showToast(error.message, 'error');
+  }
+}
+
+async function applyRecipeToCurrentProject(recipeId) {
+  if (!state.project) return log('Create or load a project first.');
+  try {
+    await persistProjectSilently();
+    state.project = await api(`/api/projects/${state.project.id}/apply-recipe/${recipeId}`, { method: 'POST' });
+    closeRecipesPanel();
+    renderAll();
+    log('Recipe applied to current project.');
+    showToast('Recipe applied', 'success');
+  } catch (error) {
+    log(error.message);
+    showToast(error.message, 'error');
+  }
+}
+
 function sourceOutputKind(node) {
+  const assetKind = nodeOutputAssets(node)[0]?.kind;
+  if (assetKind) return assetKind;
+  if (['prompt_card', 'style_card', 'character_card', 'note', 'reroute'].includes(node.type)) return 'text';
+  if (['llm_text', 'llm_vision'].includes(node.type)) return 'text';
   const model = nodeModel(node);
   return model?.output_kind || outputKindFromNodeType(node.type) || 'other';
 }
@@ -750,13 +881,16 @@ function inputHandlesForNode(node) {
   const model = nodeModel(node);
   const names = new Set();
   (model?.fields || placeholderFields(node)).forEach((field) => {
-    if (isMediaInputField(field)) names.add(field.name);
+    if (isConnectableInputField(field)) names.add(field.name);
   });
   (FALLBACK_INPUT_HANDLES[node.type] || []).forEach((name) => names.add(name));
-  return Array.from(names).map((name) => ({
-    name,
-    kind: targetInputKind(name),
-  }));
+  return Array.from(names).map((name) => {
+    const field = (model?.fields || placeholderFields(node)).find((item) => item.name === name);
+    return {
+      name,
+      kind: field?.asset_kind || targetInputKind(name),
+    };
+  });
 }
 
 function isMediaInputField(field) {
@@ -765,10 +899,22 @@ function isMediaInputField(field) {
     || field.name.endsWith('_image');
 }
 
+function isTextInputField(field) {
+  return TEXT_INPUT_NAMES.includes(field.name)
+    || field.type === 'textarea'
+    || field.name.endsWith('_prompt')
+    || field.name.includes('prompt');
+}
+
+function isConnectableInputField(field) {
+  return isMediaInputField(field) || isTextInputField(field);
+}
+
 function targetInputKind(inputName) {
-  if (['image', 'reference_image', 'last_image'].includes(inputName)) return 'image';
+  if (['image', 'reference_image', 'last_image', 'mask_image'].includes(inputName)) return 'image';
   if (inputName === 'video') return 'video';
   if (inputName === 'audio') return 'audio';
+  if (TEXT_INPUT_NAMES.includes(inputName) || inputName.endsWith('_prompt') || inputName.includes('prompt')) return 'text';
   return 'unknown';
 }
 
@@ -812,8 +958,8 @@ function edgeLabel(edge) {
 
 function outputKindFromUrl(url) {
   const clean = String(url || '').split('?')[0].toLowerCase();
-  if (/\.(mp4|mov|webm)$/.test(clean)) return 'video';
-  if (/\.(mp3|wav|m4a|ogg)$/.test(clean)) return 'audio';
+  if (/\.(mp4|mov|webm|mkv)$/.test(clean)) return 'video';
+  if (/\.(mp3|wav|m4a|ogg|flac)$/.test(clean)) return 'audio';
   if (/\.(png|jpg|jpeg|webp|gif)$/.test(clean)) return 'image';
   return '';
 }
@@ -884,6 +1030,7 @@ function renderAll() {
   renderJobs();
   renderSettingsPanel();
   renderTemplatesPanel();
+  renderRecipesPanel();
   updateWorkflowButtons();
   renderStudioChrome();
 }
@@ -920,13 +1067,15 @@ function renderLayoutState() {
   const nodesBtn = qs('#toggleNodesBtn');
   const inspectorBtn = qs('#toggleInspectorBtn');
   if (nodesBtn) {
-    nodesBtn.textContent = 'Nodes';
+    nodesBtn.textContent = state.ui.leftPanelCollapsed ? 'Show nodes' : 'Hide nodes';
     nodesBtn.title = state.ui.leftPanelCollapsed ? 'Show nodes menu' : 'Hide nodes menu';
+    nodesBtn.setAttribute('aria-label', nodesBtn.title);
     nodesBtn.setAttribute('aria-expanded', String(!state.ui.leftPanelCollapsed));
   }
   if (inspectorBtn) {
-    inspectorBtn.textContent = 'Project';
+    inspectorBtn.textContent = state.ui.rightPanelCollapsed ? 'Show project' : 'Hide project';
     inspectorBtn.title = state.ui.rightPanelCollapsed ? 'Show project menu' : 'Hide project menu';
+    inspectorBtn.setAttribute('aria-label', inspectorBtn.title);
     inspectorBtn.setAttribute('aria-expanded', String(!state.ui.rightPanelCollapsed));
   }
 }
@@ -1064,7 +1213,7 @@ function nodeCardHtml(node) {
   const resolution = modelResolution(node);
   const model = resolution.model;
   const isRunnable = !!model?.enabled && def.runnable !== false;
-  const outputKind = model?.output_kind || def.output_kind || outputKindFromNodeType(node.type);
+  const outputKind = sourceOutputKind(node) || model?.output_kind || def.output_kind || outputKindFromNodeType(node.type);
   return `
     ${renderInputHandleRail(node)}
     ${renderOutputHandle(node, outputKind)}
@@ -1086,6 +1235,8 @@ function nodeCardHtml(node) {
     ${renderPlaceholderNotice(node, def, model)}
     <div class="node-actions">
       ${isRunnable ? '<button type="button" class="primary-action" data-action="run">Run</button>' : ''}
+      ${isRunnable ? '<button type="button" data-action="variants">Variants</button>' : ''}
+      ${isRunnable ? '<button type="button" data-action="compare">Compare</button>' : ''}
       ${canBranchFromNode(node) ? '<button type="button" data-action="branch">Branch from output</button>' : ''}
       ${canBranchToVideo(node) ? '<button type="button" data-action="branch-video">Animate output</button>' : ''}
       <button type="button" data-action="save">Save</button>
@@ -1162,17 +1313,61 @@ function renderField(node, field) {
   const value = node.inputs?.[field.name] ?? field.default ?? '';
   const label = `${field.name}${field.required ? ' *' : ''}`;
   const connectionBadge = renderConnectedInputBadge(node, field.name);
+  if (isPromptCardOnlyField(node, field)) {
+    const hasConnection = !!connectionBadge;
+    const missingCopy = field.required
+      ? 'Connect a Prompt Card or LLM text node to this input.'
+      : 'Connect a Prompt Card or LLM text node to use this input.';
+    const placeholder = field.required ? 'Text source required' : 'Optional text source';
+    return `
+      <label>
+        ${escapeHtml(label)}
+        ${connectionBadge || `<span class="connected-input-badge prompt-required">${escapeHtml(missingCopy)}</span>`}
+        <input value="${hasConnection ? 'Using connected text source' : ''}" disabled placeholder="${attr(placeholder)}" />
+      </label>
+      ${renderPromptOptimizerControls(node, field)}
+    `;
+  }
   if (field.name === 'image' || field.name.endsWith('_image') || field.type === 'asset_url') {
+    if (connectionBadge) {
+      return `
+        <label>
+          ${escapeHtml(label)}
+          ${connectionBadge}
+          <input value="Using connected upstream output" disabled />
+        </label>
+      `;
+    }
+    const assets = assetsForField(field);
+    const kind = field.asset_kind || targetInputKind(field.name);
+    const choiceLabel = kind && kind !== 'unknown' ? `Choose ${kind} asset` : 'Choose asset';
     return `
       <label>
         ${escapeHtml(label)}
         ${connectionBadge}
         <select data-input="${attr(field.name)}">
-          <option value="">Choose image asset</option>
-          ${imageAssets().map((asset) => {
+          <option value="">${escapeHtml(choiceLabel)}</option>
+          ${assets.map((asset) => {
             const url = assetUrl(asset);
-            return `<option value="${attr(url)}" ${url === value ? 'selected' : ''}>${escapeHtml(asset.filename)}</option>`;
+            return `<option value="${attr(url)}" ${url === value ? 'selected' : ''}>${escapeHtml(asset.filename)} (${escapeHtml(asset.kind || 'asset')})</option>`;
           }).join('')}
+        </select>
+      </label>
+    `;
+  }
+  if (field.name === 'asset_id' || field.name === 'selected_asset_id') {
+    const assets = state.project?.assets || [];
+    return `
+      <label>
+        ${escapeHtml(label)}
+        ${connectionBadge}
+        <select data-input="${attr(field.name)}">
+          <option value="">Choose project asset</option>
+          ${assets.map((asset) => `
+            <option value="${attr(asset.id)}" ${asset.id === value ? 'selected' : ''}>
+              ${escapeHtml(asset.filename || asset.id)} (${escapeHtml(asset.kind || 'asset')})
+            </option>
+          `).join('')}
         </select>
       </label>
     `;
@@ -1208,15 +1403,74 @@ function renderField(node, field) {
         ${connectionBadge}
         <textarea data-input="${attr(field.name)}" rows="4">${escapeHtml(value)}</textarea>
       </label>
+      ${renderPromptOptimizerControls(node, field)}
     `;
   }
   return `
     <label>
       ${escapeHtml(label)}
       ${connectionBadge}
-      <input data-input="${attr(field.name)}" type="${inputTypeForField(field)}" value="${attr(value)}" />
+      <input
+        data-input="${attr(field.name)}"
+        type="${inputTypeForField(field)}"
+        value="${attr(value)}"
+        ${field.placeholder ? `placeholder="${attr(field.placeholder)}"` : ''}
+        ${field.min_value !== null && field.min_value !== undefined ? `min="${attr(field.min_value)}"` : ''}
+        ${field.max_value !== null && field.max_value !== undefined ? `max="${attr(field.max_value)}"` : ''}
+        ${field.step !== null && field.step !== undefined ? `step="${attr(field.step)}"` : ''}
+      />
     </label>
   `;
+}
+
+function isPromptCardOnlyField(node, field) {
+  const model = nodeModel(node);
+  const isUtility = model?.category === 'utility' || String(model?.id || '').startsWith('local/utility/');
+  return !isUtility && PROMPT_CARD_ONLY_FIELDS.includes(field.name);
+}
+
+function renderPromptOptimizerControls(node, field) {
+  if (field.name !== 'prompt') return '';
+  const model = nodeModel(node);
+  const isUtility = model?.category === 'utility' || String(model?.id || '').startsWith('local/utility/');
+  if (isUtility) return '';
+  const enabled = !!node.inputs?.use_prompt_optimizer;
+  const style = node.inputs?.prompt_optimizer_style || 'default';
+  const mode = node.inputs?.prompt_optimizer_mode || defaultPromptOptimizerMode(node);
+  return `
+    <div class="prompt-optimizer-box">
+      <label class="checkbox-field prompt-optimizer-toggle">
+        <input data-input="use_prompt_optimizer" type="checkbox" ${enabled ? 'checked' : ''} />
+        Use WaveSpeed prompt optimizer
+      </label>
+      <div class="prompt-optimizer-options ${enabled ? '' : 'is-disabled'}">
+        <label>
+          optimizer style
+          <select data-input="prompt_optimizer_style" ${enabled ? '' : 'disabled'}>
+            ${PROMPT_OPTIMIZER_STYLE_OPTIONS.map((option) => `
+              <option value="${attr(option)}" ${option === style ? 'selected' : ''}>${escapeHtml(option)}</option>
+            `).join('')}
+          </select>
+        </label>
+        <label>
+          optimizer mode
+          <select data-input="prompt_optimizer_mode" ${enabled ? '' : 'disabled'}>
+            ${PROMPT_OPTIMIZER_MODE_OPTIONS.map((option) => `
+              <option value="${attr(option)}" ${option === mode ? 'selected' : ''}>${escapeHtml(option)}</option>
+            `).join('')}
+          </select>
+        </label>
+      </div>
+      <div class="prompt-optimizer-model">wavespeed-ai/prompt-optimizer</div>
+    </div>
+  `;
+}
+
+function defaultPromptOptimizerMode(node) {
+  if (['image_to_video', 'start_end_to_video', 'text_to_video', 'reference_to_video', 'video_extend', 'video_effect'].includes(node.type)) {
+    return 'video';
+  }
+  return 'image';
 }
 
 function renderConnectedInputBadge(node, inputName) {
@@ -1241,7 +1495,7 @@ function renderUploadControls(node, def) {
   if (!def.upload) return '';
   return `
     <div class="upload-box">
-      <input type="file" accept="image/*" data-upload-file />
+      <input type="file" accept="${UPLOAD_ACCEPT}" data-upload-file />
       <label class="row compact">
         <input type="checkbox" data-upload-wavespeed />
         Upload to WaveSpeed
@@ -1259,9 +1513,11 @@ function renderPlaceholderNotice(node, def, model) {
 function renderOutputPreview(node) {
   const assets = nodeOutputAssets(node);
   const fallbackUrls = (node.output_urls || []).filter((url) => !assets.some((asset) => assetUrl(asset) === url));
-  if (!assets.length && !fallbackUrls.length) return '';
+  const textOutput = node.last_run?.text_output || '';
+  if (!assets.length && !fallbackUrls.length && !textOutput) return '';
   return `
     <div class="node-preview-list">
+      ${textOutput ? `<div class="output-item"><pre class="text-output-preview">${escapeHtml(textOutput)}</pre></div>` : ''}
       ${assets.map((asset) => {
         const url = assetUrl(asset);
         return mediaPreviewHtml(url, asset.kind, asset.filename);
@@ -1279,7 +1535,9 @@ function mediaPreviewHtml(url, kind, label) {
     ? `<video class="node-preview media-preview" src="${safeUrl}" controls></video>`
     : kind === 'audio'
       ? `<audio class="audio-preview" src="${safeUrl}" controls></audio>`
-      : `<a href="${safeUrl}" target="_blank"><img class="node-preview" src="${safeUrl}" alt="${attr(label || 'Generated output')}" /></a>`;
+      : kind === 'image'
+        ? `<a href="${safeUrl}" target="_blank"><img class="node-preview" src="${safeUrl}" alt="${attr(label || 'Generated output')}" /></a>`
+        : `<a class="asset-empty-preview" href="${safeUrl}" target="_blank">${safeLabel}</a>`;
   return `
     <div class="output-item">
       ${media}
@@ -1308,6 +1566,11 @@ function wireNodeCard(card, node) {
     input.addEventListener('change', () => {
       const name = input.dataset.input;
       node.inputs[name] = parseFieldValue(input.value, input.type, input.checked);
+      if (name === 'use_prompt_optimizer') {
+        node.inputs.prompt_optimizer_style ||= 'default';
+        node.inputs.prompt_optimizer_mode ||= defaultPromptOptimizerMode(node);
+        renderCanvas();
+      }
       node.updated_at = now();
     });
   });
@@ -1320,6 +1583,8 @@ function wireNodeCard(card, node) {
   card.querySelector('[data-action="save"]')?.addEventListener('click', saveProject);
   card.querySelector('[data-action="delete"]')?.addEventListener('click', () => deleteNode(node.id));
   card.querySelector('[data-action="run"]')?.addEventListener('click', () => runNode(node.id));
+  card.querySelector('[data-action="variants"]')?.addEventListener('click', () => runVariantsForNode(node.id));
+  card.querySelector('[data-action="compare"]')?.addEventListener('click', () => compareModelsForNode(node.id));
   card.querySelector('[data-action="upload"]')?.addEventListener('click', () => uploadFromNode(card, node));
   card.querySelector('[data-action="branch"]')?.addEventListener('click', () => branchFromNode(node.id));
   card.querySelector('[data-action="branch-video"]')?.addEventListener('click', () => branchToVideoFromNode(node.id));
@@ -1483,9 +1748,10 @@ function validateEdgeCandidate({ sourceNodeId, sourceOutput, sourceKind, targetN
 function mediaCompatibility(sourceKind, targetKind) {
   const source = sourceKind || 'unknown';
   const target = targetKind || 'unknown';
-  const knownTargets = ['image', 'video', 'audio'];
-  const knownSources = ['image', 'video', 'audio'];
+  const knownTargets = ['image', 'video', 'audio', 'text'];
+  const knownSources = ['image', 'video', 'audio', 'text'];
   if (source === target) return { ok: true };
+  if (source === 'text' && target === 'unknown') return { ok: true };
   if (source === 'image' && ['reference_image', 'last_image'].includes(target)) return { ok: true };
   if (source === 'image' && target === 'image') return { ok: true };
   if ((source === 'unknown' || target === 'unknown')) {
@@ -1935,7 +2201,7 @@ async function confirmEstimatedRunCost(node) {
 
 async function uploadFromNode(card, node) {
   const fileInput = card.querySelector('[data-upload-file]');
-  if (!fileInput.files.length) return log('Choose an image file first.');
+  if (!fileInput.files.length) return log('Choose a file first.');
 
   node.status = 'running';
   node.error_message = null;
@@ -1952,7 +2218,10 @@ async function uploadFromNode(card, node) {
     });
     state.project.assets.push(asset);
     node.inputs.asset_id = asset.id;
-    node.inputs.image = assetUrl(asset);
+    node.inputs.asset_url = assetUrl(asset);
+    if (asset.kind === 'image') node.inputs.image = assetUrl(asset);
+    if (asset.kind === 'audio') node.inputs.audio = assetUrl(asset);
+    if (asset.kind === 'video') node.inputs.video = assetUrl(asset);
     node.output_asset_ids = [asset.id];
     node.status = 'success';
     node.updated_at = now();
@@ -2292,6 +2561,83 @@ function renderWorkflowPanels() {
     deleteButton.disabled = true;
   }
   renderRunHistory(state.project?.runs || []);
+  renderVariantSets();
+  renderComparisonSets();
+  renderExportPackages();
+}
+
+async function runVariantsForNode(nodeId = state.selectedNodeId) {
+  if (!state.project || !nodeId) return showSelectNodeError();
+  const countText = window.prompt('How many variants?', '4');
+  if (countText === null) return;
+  const variantCount = Math.max(1, Math.min(Number(countText) || 4, 16));
+  try {
+    await persistProjectSilently();
+    const variantSet = await api(`/api/projects/${state.project.id}/nodes/${nodeId}/variants`, {
+      method: 'POST',
+      body: JSON.stringify({
+        project_id: state.project.id,
+        node_id: nodeId,
+        variant_count: variantCount,
+        parameters: [{ field: 'seed', strategy: 'seed', values: [] }],
+        save_to_project: true,
+        label: `${variantCount} seed variants`,
+      }),
+    });
+    await reloadCurrentProject();
+    renderAll();
+    await refreshJobs();
+    ensureJobPolling();
+    log(variantSet);
+    showToast('Variant jobs queued', 'success');
+  } catch (error) {
+    log(error.message);
+    showToast(error.message, 'error');
+  }
+}
+
+async function createExportPackage() {
+  if (!state.project) return log('Create or load a project first.');
+  try {
+    await persistProjectSilently();
+    const manifest = await api(`/api/projects/${state.project.id}/export-package`, {
+      method: 'POST',
+      body: JSON.stringify({ asset_ids: [] }),
+    });
+    await reloadCurrentProject();
+    renderAll();
+    log(manifest);
+    showToast('Export package created', 'success');
+  } catch (error) {
+    log(error.message);
+    showToast(error.message, 'error');
+  }
+}
+
+async function compareModelsForNode(nodeId = state.selectedNodeId) {
+  if (!state.project || !nodeId) return showSelectNodeError();
+  try {
+    await persistProjectSilently();
+    const comparison = await api(`/api/projects/${state.project.id}/nodes/${nodeId}/compare-models`, {
+      method: 'POST',
+      body: JSON.stringify({
+        project_id: state.project.id,
+        source_node_id: nodeId,
+        model_ids: [],
+        save_to_project: true,
+        label: 'Model comparison',
+      }),
+    });
+    await reloadCurrentProject();
+    renderAll();
+    await refreshJobs();
+    ensureJobPolling();
+    log(comparison);
+    showToast('Comparison queued', 'success');
+  } catch (error) {
+    log(error.message);
+    showToast(error.message, 'error');
+  }
 }
 
 function renderWorkflowPlan(plan) {
@@ -2366,9 +2712,156 @@ function renderRunHistory(runs = []) {
     <div class="run-history-item ${escapeHtml(run.status || 'idle')}">
       <strong>${escapeHtml(run.type || 'workflow')} - ${escapeHtml(run.status || 'unknown')}</strong>
       <span>${escapeHtml((run.node_ids || []).join(' -> ') || 'no nodes')}</span>
+      <span>${escapeHtml(run.model_id || '')}</span>
       <small>${escapeHtml(run.finished_at || run.started_at || '')}</small>
+      <div class="job-actions">
+        <button type="button" data-rerun-id="${attr(run.id || run.run_id)}">Rerun</button>
+        <button type="button" data-clone-run-id="${attr(run.id || run.run_id)}">Clone Node</button>
+      </div>
     </div>
   `).join('');
+  panel.querySelectorAll('[data-rerun-id]').forEach((button) => {
+    button.addEventListener('click', () => rerunSnapshot(button.dataset.rerunId));
+  });
+  panel.querySelectorAll('[data-clone-run-id]').forEach((button) => {
+    button.addEventListener('click', () => cloneRunNode(button.dataset.cloneRunId));
+  });
+}
+
+function renderVariantSets() {
+  const panel = qs('#variantSets');
+  if (!panel) return;
+  const sets = state.project?.variant_sets || [];
+  if (!sets.length) {
+    panel.innerHTML = '<div class="empty-state compact-empty"><strong>No variants yet.</strong><span>Use Run Variants on a selected runnable node.</span></div>';
+    return;
+  }
+  panel.innerHTML = sets.slice(0, 6).map((set) => groupedSetHtml(set, 'variant')).join('');
+  panel.querySelectorAll('[data-promote-variant]').forEach((button) => {
+    button.addEventListener('click', () => promoteVariant(button.dataset.variantSet, button.dataset.promoteVariant));
+  });
+  panel.querySelectorAll('[data-cancel-variant]').forEach((button) => {
+    button.addEventListener('click', () => cancelVariantSet(button.dataset.cancelVariant));
+  });
+}
+
+function renderComparisonSets() {
+  const panel = qs('#comparisonSets');
+  if (!panel) return;
+  const sets = state.project?.comparison_sets || [];
+  if (!sets.length) {
+    panel.innerHTML = '<div class="empty-state compact-empty"><strong>No comparisons yet.</strong><span>Use Compare Models on a runnable node.</span></div>';
+    return;
+  }
+  panel.innerHTML = sets.slice(0, 6).map((set) => groupedSetHtml(set, 'comparison')).join('');
+  panel.querySelectorAll('[data-promote-comparison]').forEach((button) => {
+    button.addEventListener('click', () => promoteComparison(button.dataset.comparisonSet, button.dataset.promoteComparison));
+  });
+}
+
+function renderExportPackages() {
+  const panel = qs('#exportPackages');
+  if (!panel) return;
+  const packages = state.project?.export_packages || [];
+  if (!packages.length) {
+    panel.innerHTML = '<div class="empty-state compact-empty"><strong>No packages yet.</strong><span>Mark artifacts as winners, then export a package.</span></div>';
+    return;
+  }
+  panel.innerHTML = packages.slice(0, 5).map((manifest) => `
+    <div class="run-history-item success">
+      <strong>${escapeHtml(manifest.id)}</strong>
+      <span>${Number(manifest.artifacts?.length || 0)} artifacts</span>
+      <small>${escapeHtml(manifest.created_at || '')}</small>
+    </div>
+  `).join('');
+}
+
+function groupedSetHtml(set, kind) {
+  const artifacts = (set.artifact_ids || []).map(assetById).filter(Boolean);
+  const promoteAttr = kind === 'variant' ? 'data-promote-variant' : 'data-promote-comparison';
+  const setAttr = kind === 'variant' ? 'data-variant-set' : 'data-comparison-set';
+  return `
+    <div class="run-history-item ${escapeHtml(set.status || 'queued')}">
+      <strong>${escapeHtml(set.label || set.id)} - ${escapeHtml(set.status || 'queued')}</strong>
+      <span>${Number(set.job_ids?.length || 0)} jobs, ${Number(set.artifact_ids?.length || 0)} artifacts</span>
+      ${set.errors?.length ? `<small>${escapeHtml(set.errors[0].message || 'Some jobs failed')}</small>` : ''}
+      ${kind === 'variant' ? `<div class="job-actions"><button type="button" data-cancel-variant="${attr(set.id)}">Cancel Set</button></div>` : ''}
+      <div class="mini-artifact-grid">
+        ${artifacts.map((asset) => {
+          const url = assetUrl(asset);
+          return `
+            <div class="mini-artifact">
+              ${assetMediaHtml(url, asset.kind, asset.filename)}
+              <button type="button" ${promoteAttr}="${attr(asset.id)}" ${setAttr}="${attr(set.id)}">Winner</button>
+            </div>
+          `;
+        }).join('')}
+      </div>
+    </div>
+  `;
+}
+
+async function promoteVariant(variantSetId, assetId) {
+  try {
+    await api(`/api/projects/${state.project.id}/variants/${variantSetId}/promote/${assetId}`, { method: 'POST' });
+    await reloadCurrentProject();
+    renderAll();
+    showToast('Variant winner selected', 'success');
+  } catch (error) {
+    log(error.message);
+    showToast(error.message, 'error');
+  }
+}
+
+async function cancelVariantSet(variantSetId) {
+  try {
+    await api(`/api/projects/${state.project.id}/variants/${variantSetId}/cancel`, { method: 'POST' });
+    await reloadCurrentProject();
+    renderAll();
+    await refreshJobs();
+    showToast('Variant set cancellation requested', 'warning');
+  } catch (error) {
+    log(error.message);
+    showToast(error.message, 'error');
+  }
+}
+
+async function promoteComparison(comparisonId, assetId) {
+  try {
+    await api(`/api/projects/${state.project.id}/comparisons/${comparisonId}/winner/${assetId}`, { method: 'POST' });
+    await reloadCurrentProject();
+    renderAll();
+    showToast('Comparison winner selected', 'success');
+  } catch (error) {
+    log(error.message);
+    showToast(error.message, 'error');
+  }
+}
+
+async function rerunSnapshot(runId) {
+  try {
+    const job = await api(`/api/projects/${state.project.id}/runs/${runId}/rerun`, { method: 'POST' });
+    await refreshJobs();
+    ensureJobPolling();
+    log(`Rerun queued: ${job.id}`);
+    showToast('Rerun queued', 'success');
+  } catch (error) {
+    log(error.message);
+    showToast(error.message, 'error');
+  }
+}
+
+async function cloneRunNode(runId) {
+  try {
+    const node = await api(`/api/projects/${state.project.id}/runs/${runId}/clone-node`, { method: 'POST' });
+    await reloadCurrentProject();
+    state.selectedNodeId = node.id;
+    renderAll();
+    showToast('Run node cloned', 'success');
+  } catch (error) {
+    log(error.message);
+    showToast(error.message, 'error');
+  }
 }
 
 function setWorkflowRunning(isRunning) {
@@ -2378,10 +2871,10 @@ function setWorkflowRunning(isRunning) {
 
 function updateWorkflowButtons() {
   const hasProject = !!state.project;
-  ['#previewPlanBtn', '#runWholeGraphBtn', '#refreshRunsBtn'].forEach((selector) => {
+  ['#previewPlanBtn', '#runWholeGraphBtn', '#refreshRunsBtn', '#exportPackageBtn'].forEach((selector) => {
     qs(selector).disabled = !hasProject || state.workflowRunning;
   });
-  ['#runSelectedBtn', '#runFromSelectedBtn'].forEach((selector) => {
+  ['#runSelectedBtn', '#runFromSelectedBtn', '#runVariantsSelectedBtn', '#compareSelectedBtn'].forEach((selector) => {
     qs(selector).disabled = !hasProject || state.workflowRunning;
   });
   ['#saveProjectBtn', '#exportProjectBtn', '#duplicateProjectBtn', '#saveTemplateBtn', '#projectSettingsBtn'].forEach((selector) => {
@@ -2415,17 +2908,36 @@ function renderAssets() {
   list.querySelectorAll('[data-action="copy-url"]').forEach((button) => {
     button.addEventListener('click', () => copyText(button.dataset.url || ''));
   });
+  list.querySelectorAll('[data-artifact-pin]').forEach((button) => {
+    button.addEventListener('click', () => updateArtifactAction(button.dataset.artifactPin, 'pin'));
+  });
+  list.querySelectorAll('[data-artifact-winner]').forEach((button) => {
+    button.addEventListener('click', () => setArtifactRole(button.dataset.artifactWinner, 'winner'));
+  });
+  list.querySelectorAll('[data-artifact-reject]').forEach((button) => {
+    button.addEventListener('click', () => updateArtifactAction(button.dataset.artifactReject, 'reject'));
+  });
+  list.querySelectorAll('[data-artifact-branch]').forEach((button) => {
+    button.addEventListener('click', () => branchFromArtifact(button.dataset.artifactBranch));
+  });
+  list.querySelectorAll('[data-artifact-lineage]').forEach((button) => {
+    button.addEventListener('click', () => showArtifactLineage(button.dataset.artifactLineage));
+  });
 }
 
 function assetCardHtml(asset, url) {
   const kind = asset.kind || outputKindFromUrl(url) || 'other';
-  const sourceNodeId = asset.metadata?.source_node_id || '';
+  const sourceNodeId = asset.lineage?.source_node_id || asset.metadata?.source_node_id || '';
+  const role = asset.view?.role || 'intermediate';
   return `
     ${assetMediaHtml(url, kind, asset.filename)}
     <div class="asset-card-body">
       <strong>${escapeHtml(asset.filename || asset.id)}</strong>
       <div class="badge-row">
         <span class="badge">${escapeHtml(kind)}</span>
+        <span class="badge ${role === 'winner' ? 'ok' : ''}">${escapeHtml(role)}</span>
+        ${asset.view?.pinned ? '<span class="badge ok">pinned</span>' : ''}
+        ${asset.view?.rejected ? '<span class="badge muted-badge">rejected</span>' : ''}
         ${sourceNodeId ? `<span class="badge">source ${escapeHtml(sourceNodeId)}</span>` : ''}
       </div>
       <span class="asset-meta">${escapeHtml(asset.created_at ? formatDate(asset.created_at) : '')}</span>
@@ -2436,8 +2948,82 @@ function assetCardHtml(asset, url) {
           <a href="${attr(url)}" download>Download</a>
         </div>
       ` : '<span class="asset-meta">No public URL available.</span>'}
+      <div class="asset-actions">
+        <button type="button" data-artifact-pin="${attr(asset.id)}">Pin</button>
+        <button type="button" data-artifact-winner="${attr(asset.id)}">Winner</button>
+        <button type="button" data-artifact-reject="${attr(asset.id)}">Reject</button>
+        <button type="button" data-artifact-branch="${attr(asset.id)}">Branch</button>
+        <button type="button" data-artifact-lineage="${attr(asset.id)}">Lineage</button>
+      </div>
     </div>
   `;
+}
+
+async function updateArtifactAction(assetId, action) {
+  if (!state.project) return;
+  try {
+    await api(`/api/projects/${state.project.id}/artifacts/${assetId}/${action}`, { method: 'POST' });
+    await reloadCurrentProject();
+    renderAll();
+    showToast(`Artifact ${action} updated`, 'success');
+  } catch (error) {
+    log(error.message);
+    showToast(error.message, 'error');
+  }
+}
+
+async function setArtifactRole(assetId, role) {
+  if (!state.project) return;
+  try {
+    await api(`/api/projects/${state.project.id}/artifacts/${assetId}/role`, {
+      method: 'POST',
+      body: JSON.stringify({ role }),
+    });
+    await reloadCurrentProject();
+    renderAll();
+    showToast('Artifact winner selected', 'success');
+  } catch (error) {
+    log(error.message);
+    showToast(error.message, 'error');
+  }
+}
+
+async function branchFromArtifact(assetId) {
+  const asset = assetById(assetId);
+  if (!asset) return;
+  const defaults = {
+    image: 'image_to_image',
+    video: 'lip_sync',
+    audio: 'speech_to_text',
+    other: 'text_to_image',
+  };
+  const target = window.prompt('Target node type', defaults[asset.kind] || 'text_to_image');
+  if (target === null || !target.trim()) return;
+  try {
+    const result = await api(`/api/projects/${state.project.id}/artifacts/${assetId}/branch`, {
+      method: 'POST',
+      body: JSON.stringify({ target_node_type: target.trim(), title: `${target.trim().replaceAll('_', ' ')} branch` }),
+    });
+    await reloadCurrentProject();
+    state.selectedNodeId = result.node?.id || null;
+    renderAll();
+    showToast('Artifact branch created', 'success');
+  } catch (error) {
+    log(error.message);
+    showToast(error.message, 'error');
+  }
+}
+
+async function showArtifactLineage(assetId) {
+  try {
+    const lineage = await api(`/api/projects/${state.project.id}/artifacts/${assetId}/lineage`);
+    log(lineage);
+    showToast('Lineage written to Activity', 'success');
+    setInspectorTab('activity');
+  } catch (error) {
+    log(error.message);
+    showToast(error.message, 'error');
+  }
 }
 
 function assetMediaHtml(url, kind, label) {
@@ -2523,6 +3109,7 @@ qs('#importProjectBtn').addEventListener('click', openImportPicker);
 qs('#importProjectFile').addEventListener('change', importProjectFile);
 qs('#duplicateProjectBtn').addEventListener('click', duplicateProject);
 qs('#templatesBtn').addEventListener('click', openTemplatesPanel);
+qs('#recipesBtn').addEventListener('click', openRecipesPanel);
 qs('#saveTemplateBtn').addEventListener('click', saveCurrentProjectAsTemplate);
 qs('#loadProjectBtn').addEventListener('click', loadSelectedProject);
 qs('#projectSettingsBtn').addEventListener('click', openProjectSettings);
@@ -2531,6 +3118,8 @@ qs('#cancelSettingsBtn').addEventListener('click', closeProjectSettings);
 qs('#settingsPanelBackdrop').addEventListener('click', closeProjectSettings);
 qs('#closeTemplatesBtn').addEventListener('click', closeTemplatesPanel);
 qs('#templatesPanelBackdrop').addEventListener('click', closeTemplatesPanel);
+qs('#closeRecipesBtn').addEventListener('click', closeRecipesPanel);
+qs('#recipesPanelBackdrop').addEventListener('click', closeRecipesPanel);
 qs('#saveSettingsBtn').addEventListener('click', saveProjectSettings);
 qs('#projectName').addEventListener('input', updateProjectFieldsFromForm);
 qs('#projectDescription').addEventListener('input', updateProjectFieldsFromForm);
@@ -2538,6 +3127,9 @@ qs('#previewPlanBtn').addEventListener('click', previewWorkflowPlan);
 qs('#runSelectedBtn').addEventListener('click', runSelectedWorkflowNode);
 qs('#runFromSelectedBtn').addEventListener('click', runFromSelectedNode);
 qs('#runWholeGraphBtn').addEventListener('click', runWholeGraph);
+qs('#runVariantsSelectedBtn').addEventListener('click', () => runVariantsForNode(state.selectedNodeId));
+qs('#compareSelectedBtn').addEventListener('click', () => compareModelsForNode(state.selectedNodeId));
+qs('#exportPackageBtn').addEventListener('click', createExportPackage);
 qs('#refreshRunsBtn').addEventListener('click', refreshRunHistory);
 qs('#refreshJobsBtn').addEventListener('click', refreshJobs);
 qs('#clearCompletedJobsBtn').addEventListener('click', clearCompletedJobs);
@@ -2560,6 +3152,10 @@ document.addEventListener('keydown', (event) => {
     }
     if (state.templatesOpen) {
       closeTemplatesPanel();
+      return;
+    }
+    if (state.recipesOpen) {
+      closeRecipesPanel();
       return;
     }
   }

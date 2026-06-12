@@ -9,7 +9,24 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.core.config import get_settings
-from app.routers import assets, health, jobs, model_catalog, models, projects, runs, templates, workflows
+from app.routers import (
+    artifacts,
+    assets,
+    comparisons,
+    export_packages,
+    health,
+    jobs,
+    model_catalog,
+    models,
+    project_recipes,
+    projects,
+    recipes,
+    run_snapshots,
+    runs,
+    templates,
+    variants,
+    workflows,
+)
 from app.services.run_manager import run_manager
 
 settings = get_settings()
@@ -47,10 +64,17 @@ app.include_router(models.router)
 app.include_router(model_catalog.router)
 app.include_router(projects.router)
 app.include_router(assets.router)
+app.include_router(artifacts.router)
 app.include_router(runs.router)
 app.include_router(workflows.router)
 app.include_router(templates.router)
 app.include_router(jobs.router)
+app.include_router(variants.router)
+app.include_router(comparisons.router)
+app.include_router(export_packages.router)
+app.include_router(recipes.router)
+app.include_router(project_recipes.router)
+app.include_router(run_snapshots.router)
 
 
 @app.exception_handler(RequestValidationError)
