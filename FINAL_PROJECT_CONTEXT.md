@@ -2,7 +2,7 @@
 
 ## One-Paragraph Summary
 
-This project is a FastAPI plus vanilla HTML/CSS/JS MVP for an AI canvas workflow app inspired by Figma Weave, but intentionally without professional editing tools. Users can create/load local projects, add draggable catalog-driven node cards, manually wire nodes with visual handles, upload assets, queue supported WaveSpeed nodes and simple graph workflows through a local Run Manager, branch generated outputs, preview media, save node state and positions, configure project settings, use model overrides, estimate local node/workflow cost, export/import portable workflow JSON, duplicate projects, and reuse built-in or local workflow templates. The backend uses local JSON files, local upload/template folders, and an in-memory local job queue only; there is no database, auth, billing system, React, Next.js, Tailwind, Redis/Celery, or hardcoded secret.
+This project is a FastAPI plus vanilla HTML/CSS/JS MVP for an AI canvas workflow app inspired by Figma Weave, but intentionally without professional editing tools. The current frontend is WaveSpeed Studio v8: users can create/load local projects, add draggable catalog-driven node cards from a searchable/filterable library, manually wire nodes with visual handles, upload assets, queue supported WaveSpeed nodes and simple graph workflows through a local Run Manager, branch generated outputs, preview media, save node state and positions, configure project settings, use model overrides, estimate local node/workflow cost, export/import portable workflow JSON, duplicate projects, and reuse built-in or local workflow templates. The backend uses local JSON files, local upload/template folders, and an in-memory local job queue only; there is no database, auth, billing system, React, Next.js, Tailwind, Redis/Celery, or hardcoded secret.
 
 ## Product Goal
 
@@ -58,9 +58,9 @@ Build a simple AI canvas for composing generation workflows around WaveSpeed mod
 
 ## Current Frontend Files
 
-- `web/index.html`: top bar, collapsible side menus, node library, canvas, inspector, workflow panels, Run Manager panel, log area.
-- `web/app.js`: project loading/saving, model library rendering, node forms, node dragging, visual handle wiring, connection SVGs, edge selection/deletion, upload handling, queued run handling, job polling/cancel/retry, workflow actions, asset panel, previews, branching.
-- `web/style.css`: dark three-column MVP layout, collapsible side-tab controls, node card styles, canvas grid, media previews, workflow/job panels, responsive fallback.
+- `web/index.html`: WaveSpeed Studio v8 shell with grouped command bar, collapsible side menus, searchable/filterable node library, canvas HUD, tabbed inspector, Run Manager panel, Activity log, settings/templates panels, and toast stack.
+- `web/app.js`: project loading/saving, model library rendering/search/filtering, canvas stats/selection bar, inspector tabs, toasts, keyboard shortcuts, node forms, node dragging, visual handle wiring, connection SVGs, edge selection/deletion, upload handling, queued run handling, job polling/cancel/retry, workflow actions, asset panel, previews, branching.
+- `web/style.css`: tokenized dark studio theme, grouped command bars, glass panels, collapsible side-tab controls, node card styles, canvas grid/HUD, media previews, workflow/job panels, inspector tabs, responsive fallback, and toast styles.
 
 ## Current API Endpoints
 
@@ -172,12 +172,18 @@ TASK_V6 is implemented. It added Visual Connector Editor v1 without React or a g
 
 TASK_V7 is implemented. It added Local Run Manager v1 without Redis, Celery, a database, WebSockets, or SSE. `app/services/run_manager.py` keeps an in-memory job registry and one local worker queue, starts/stops through FastAPI lifespan, queues single-node and workflow jobs, checks V4 cost guard before queueing, prevents duplicate active node jobs and duplicate active whole-graph jobs, updates node statuses, records real step-count progress, writes terminal jobs into project `runs` history, caps history to the latest 100 entries, supports cancelling queued jobs immediately, marks running jobs as `cancel_requested`, stops workflow jobs between steps when cancellation is requested, and retries failed/cancelled jobs with new job IDs. `app/routers/jobs.py` exposes the `/api/jobs` endpoints. The vanilla frontend now has a Run Manager panel, polls jobs while active, queues normal node/workflow run buttons by default, and provides cancel/retry controls. Tests in `tests/test_v7.py` cover queued node execution, cancellation, retry, workflow cancellation between steps, cost guard blocking, progress totals, filters, clearing completed jobs, and endpoint shape.
 
+## TASK_V8 Summary
+
+TASK_V8 is implemented as an in-place vanilla UI upgrade. It renamed the visible product experience to WaveSpeed Studio v8, reorganized the static frontend into grouped command bars, added node library search and dynamic category filters, added canvas stats and a selection bar, converted the right inspector into Project/Workflow/Runs/Activity tabs, added toast notifications without replacing the Activity log, added keyboard shortcuts, improved empty states, and replaced the stylesheet with a polished dark studio theme. Existing FastAPI routes, local JSON storage, project data shape, V7 Run Manager behavior, and required DOM IDs remain preserved.
+
 ## Current Frontend Behavior
 
 - Opens at `http://localhost:8000`.
 - Auto-loads the last project from local storage, falls back to first project, or creates one.
+- Uses the WaveSpeed Studio v8 grouped command bar.
 - Lets users create, load, edit, and save projects.
 - Renders node library entries from `/api/models`.
+- Lets users search the node library and filter by category chips.
 - Shows disabled/planned nodes with reason text and disabled `Coming Soon` buttons.
 - Opens a Project Settings panel for cost guard and model overrides.
 - Exports/imports portable project JSON and duplicates projects from the top bar.
@@ -187,6 +193,10 @@ TASK_V7 is implemented. It added Local Run Manager v1 without Redis, Celery, a d
 - Lets users manually drag from output handles to media input handles to create edges.
 - Draws SVG connection lines from handle positions, with target-input labels and selected-edge styling.
 - Lets users select and delete edges, including via the `Delete Selected Edge` button or Delete/Backspace key.
+- Shows canvas stats and selection context in the canvas HUD.
+- Uses a tabbed inspector for Project, Workflow, Runs, and Activity.
+- Shows toast feedback for common actions while preserving the Activity log.
+- Supports keyboard shortcuts for save, workflow preview/run, inspector tabs, Escape handling, and selected-edge deletion.
 - Shows connected-input badges and disconnect actions on node input fields.
 - Upload node stores local assets and can optionally upload to WaveSpeed.
 - Node fields are generated from model field specs where available.
@@ -274,12 +284,12 @@ Add asset cleanup/storage management. Database/auth/billing/React remain prematu
 
 This is a FastAPI + vanilla HTML/CSS/JS MVP AI canvas app for WaveSpeed workflows. Backend files live in `app/`; frontend files live in `web/`; local project JSON is stored under `data/projects`; uploads go to `data/uploads` and are served from `/uploads`; the frontend is served at `/`. Secrets must stay in environment variables only, especially `WAVESPEED_API_KEY`.
 
-The app currently supports local projects, draggable catalog-driven node cards, node `x`/`y` persistence, visual handle-based edge wiring, edge labels/selection/deletion, connected-input badges, local asset upload with optional WaveSpeed upload, model registry/catalog endpoints, project settings, model overrides, local cost guard, queued node/workflow execution through the local Run Manager, job polling/cancel/retry, persistent terminal run history, output assets, media previews, branch creation from image outputs to remix or image-to-video nodes, portable project JSON export/import, local project duplication, and reusable workflow templates.
+The app currently supports the WaveSpeed Studio v8 vanilla UI, local projects, searchable/filterable catalog-driven node cards, canvas stats/selection HUD, tabbed inspector, toast feedback, keyboard shortcuts, node `x`/`y` persistence, visual handle-based edge wiring, edge labels/selection/deletion, connected-input badges, local asset upload with optional WaveSpeed upload, model registry/catalog endpoints, project settings, model overrides, local cost guard, queued node/workflow execution through the local Run Manager, job polling/cancel/retry, persistent terminal run history, output assets, media previews, branch creation from image outputs to remix or image-to-video nodes, portable project JSON export/import, local project duplication, and reusable workflow templates.
 
 Core endpoints: `/api/health`, `/api/categories`, `/api/models`, `/api/model-catalog`, `/api/model-catalog/cheapest`, `/api/projects`, `/api/projects/{project_id}/settings`, `/api/projects/{project_id}/export`, `/api/projects/import`, `/api/projects/{project_id}/duplicate`, `/api/templates`, `/api/assets/upload`, `/api/runs/estimate`, `/api/runs/node`, `/api/workflows/{project_id}/plan`, `/api/workflows/{project_id}/run-selected`, `/api/workflows/{project_id}/run-from-node/{node_id}`, `/api/workflows/{project_id}/run-all`, `/api/workflows/{project_id}/runs`, `/api/jobs`, `/api/jobs/node`, `/api/jobs/workflow/selected`, `/api/jobs/workflow/from-node/{node_id}`, `/api/jobs/workflow/all`, `/docs`, and `/`.
 
 Enabled runnable WaveSpeed models are `wavespeed-ai/z-image/turbo` for text-to-image, `wavespeed-ai/z-image-turbo/image-to-image` for remix, `wavespeed-ai/image-upscaler`, `wavespeed-ai/image-background-remover`, `wavespeed-ai/wan-2.2/i2v-480p-ultra-fast` for image-to-video, and `wavespeed-ai/qwen3-tts/text-to-speech`. Disabled/planned categories remain visible but non-runnable: reference-to-image, remove-object, start/end video, text-to-video, reference-to-video, video extend/effect, text-to-audio, speech-to-text, generate voice, avatar/lip-sync/portrait transfer, image-to-3D, text-to-3D, and generic WaveSpeed.
 
-TASK_V2 is implemented: workflow graph planning, selected/from-node/all runs, run history, edge normalization, cycle detection, topological order, and frontend workflow controls. TASK_V3 is implemented: richer model catalog, overrides/cost guard schemas, cost estimator, enabled verified safe models, frontend catalog UI, media previews, asset grid, branch-to-video, and tests. TASK_V4 is implemented: settings endpoints/UI, override validation, workflow cost totals, workflow cost blocking, catalog-driven node library cleanup, node effective-model display, and tests. TASK_V5 is implemented: export/import/duplicate/templates. TASK_V6 is implemented: visual connector editor. TASK_V7 is implemented: local in-memory Run Manager with queued single-node/workflow jobs, polling UI, best-effort cancel, retry, and project run history integration.
+TASK_V2 is implemented: workflow graph planning, selected/from-node/all runs, run history, edge normalization, cycle detection, topological order, and frontend workflow controls. TASK_V3 is implemented: richer model catalog, overrides/cost guard schemas, cost estimator, enabled verified safe models, frontend catalog UI, media previews, asset grid, branch-to-video, and tests. TASK_V4 is implemented: settings endpoints/UI, override validation, workflow cost totals, workflow cost blocking, catalog-driven node library cleanup, node effective-model display, and tests. TASK_V5 is implemented: export/import/duplicate/templates. TASK_V6 is implemented: visual connector editor. TASK_V7 is implemented: local in-memory Run Manager with queued single-node/workflow jobs, polling UI, best-effort cancel, retry, and project run history integration. TASK_V8 is implemented: WaveSpeed Studio v8 UI with grouped command bar, searchable/filterable node library, canvas HUD, tabbed inspector, toasts, keyboard shortcuts, and polished responsive styling.
 
 Validation commands: `python -m compileall app`, `node --check web/app.js`, `python -m unittest discover -s tests -v`, and `python -m uvicorn app.main:app --reload --port 8000`. Manual test: open `http://localhost:8000`, create project, add Text to Image and Image to Image, drag output to `image` input, save, refresh, reload, verify edge persistence, queue node and workflow jobs through the Run Manager, cancel/retry jobs, confirm step-count progress and terminal run history, branch to Remix, upload/select asset, run remix/upscale/remove-background/image-to-video, and verify positions/previews persist.

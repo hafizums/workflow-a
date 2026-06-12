@@ -126,6 +126,10 @@ The MVP supports:
 15. Queueing single-node and workflow runs through the local Run Manager.
 16. Cancelling queued jobs, requesting best-effort cancellation for running jobs, and retrying failed/cancelled jobs.
 
+## V8 UI upgrade
+
+V8 keeps the vanilla FastAPI/static frontend but reorganizes the interface into **WaveSpeed Studio v8**: a studio layout with grouped command bars, searchable node library, dynamic category filters, canvas stats, a selection strip, tabbed inspector, toast feedback, and safer keyboard shortcuts. Existing project, template, asset, workflow, and run-manager APIs remain unchanged.
+
 ## Important implementation notes
 
 Localhost file URLs are usually not reachable by remote AI APIs. For image-to-image or image-to-video nodes, use the upload endpoint with `upload_to_wavespeed=true`, then copy the returned `wavespeed_url` into the node input field.

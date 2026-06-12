@@ -3,85 +3,150 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>WaveSpeed Canvas MVP</title>
+  <title>WaveSpeed Studio v8</title>
+  <link rel="icon" href="data:," />
   <link rel="stylesheet" href="/style.css" />
 </head>
 <body>
-  <header class="topbar">
-    <div class="topbar-brand">
-      <strong>WaveSpeed Canvas MVP</strong>
-      <span class="muted">Vanilla canvas workflow</span>
-    </div>
-    <div class="topbar-actions">
-      <select id="projectSelect" aria-label="Project"></select>
-      <button id="loadProjectBtn">Load</button>
-      <button id="newProjectBtn">New Project</button>
-      <button id="saveProjectBtn">Save Project</button>
-      <button id="exportProjectBtn">Export Project</button>
-      <button id="importProjectBtn">Import Project</button>
-      <button id="duplicateProjectBtn">Duplicate Project</button>
-      <button id="templatesBtn">Templates</button>
-      <button id="saveTemplateBtn">Save as Template</button>
-      <button id="projectSettingsBtn">Project Settings</button>
-      <input id="importProjectFile" class="hidden" type="file" accept="application/json,.json" />
-      <a href="/docs" target="_blank">API Docs</a>
-    </div>
-  </header>
+  <div class="app-shell">
+    <header class="studio-topbar topbar">
+      <section class="brand-block" aria-label="Application">
+        <div class="brand-mark">WS</div>
+        <div>
+          <strong>WaveSpeed Studio v8</strong>
+          <span class="muted">Vanilla AI workflow canvas</span>
+        </div>
+      </section>
 
-  <main id="appLayout" class="layout">
-    <button id="toggleNodesBtn" class="panel-tab panel-tab-left" type="button" aria-expanded="true">Nodes</button>
-    <button id="toggleInspectorBtn" class="panel-tab panel-tab-right" type="button" aria-expanded="true">Project</button>
-    <aside class="sidebar">
-      <h2>Nodes</h2>
-      <div id="nodeLibrary" class="node-library"></div>
+      <section class="command-group project-command-group" aria-label="Project selector">
+        <label class="sr-only" for="projectSelect">Project</label>
+        <select id="projectSelect" aria-label="Project"></select>
+        <button id="loadProjectBtn" type="button">Load</button>
+        <button id="newProjectBtn" type="button">New</button>
+        <button id="saveProjectBtn" class="primary-action" type="button">Save</button>
+      </section>
 
-      <h2>Project Assets</h2>
-      <div id="assetList" class="asset-list"></div>
-    </aside>
+      <section class="command-group project-file-group" aria-label="Project file actions">
+        <button id="exportProjectBtn" type="button">Export</button>
+        <button id="importProjectBtn" type="button">Import</button>
+        <button id="duplicateProjectBtn" type="button">Duplicate</button>
+        <input id="importProjectFile" class="hidden" type="file" accept="application/json,.json" />
+      </section>
 
-    <section class="canvas-wrap">
-      <div id="canvas" class="canvas">
-        <div class="canvas-help">Add nodes from the left. This phase keeps the canvas simple and saves node state to project JSON.</div>
-      </div>
-    </section>
+      <section class="command-group workflow-command-group" aria-label="Workflow actions">
+        <button id="templatesBtn" type="button">Templates</button>
+        <button id="saveTemplateBtn" type="button">Save Template</button>
+        <button id="projectSettingsBtn" type="button">Settings</button>
+      </section>
 
-    <aside class="inspector">
-      <h2>Project</h2>
-      <label class="stack">
-        Name
-        <input id="projectName" />
-      </label>
-      <label class="stack">
-        Description
-        <textarea id="projectDescription" rows="4"></textarea>
-      </label>
-      <h2>Workflow</h2>
-      <div class="workflow-actions">
-        <button type="button" id="previewPlanBtn">Preview Plan</button>
-        <button type="button" id="runSelectedBtn">Run Selected</button>
-        <button type="button" id="runFromSelectedBtn">Run From Selected</button>
-        <button type="button" id="runWholeGraphBtn">Run Whole Graph</button>
-        <button type="button" id="refreshRunsBtn">Refresh Runs</button>
-      </div>
-      <div id="selectedNodeLabel" class="muted">No node selected.</div>
-      <div id="selectedEdgePanel" class="edge-panel muted">No edge selected.</div>
-      <button type="button" id="deleteSelectedEdgeBtn" class="full-width" disabled>Delete Selected Edge</button>
-      <h2>Workflow Plan</h2>
-      <div id="workflowPlan" class="workflow-panel muted">No plan preview yet.</div>
-      <h2>Workflow Messages</h2>
-      <div id="workflowMessages" class="workflow-panel muted">No workflow messages.</div>
-      <h2>Run Manager</h2>
-      <div class="run-manager-actions">
-        <button type="button" id="refreshJobsBtn">Refresh Jobs</button>
-        <button type="button" id="clearCompletedJobsBtn">Clear Completed</button>
-      </div>
-      <div id="jobList" class="job-list muted">No jobs loaded.</div>
-      <h2>Run History</h2>
-      <div id="runHistory" class="workflow-panel muted">No runs loaded.</div>
-      <h2>Activity</h2>
-      <pre id="outputLog"></pre>
-    </aside>
-  </main>
+      <section class="command-group utility-command-group" aria-label="Utilities">
+        <a href="/docs" target="_blank">API Docs</a>
+      </section>
+    </header>
+
+    <main id="appLayout" class="layout studio-layout">
+      <button id="toggleNodesBtn" class="panel-tab panel-tab-left" type="button" aria-expanded="true">Nodes</button>
+      <button id="toggleInspectorBtn" class="panel-tab panel-tab-right" type="button" aria-expanded="true">Studio</button>
+
+      <aside class="sidebar studio-sidebar" aria-label="Node library and assets">
+        <section class="panel-section library-section">
+          <header class="section-header">
+            <div>
+              <h2>Node Library</h2>
+              <p class="muted">Search, filter, and add workflow blocks.</p>
+            </div>
+          </header>
+          <label class="sr-only" for="nodeSearchInput">Search nodes</label>
+          <input id="nodeSearchInput" class="search-input" type="search" placeholder="Search nodes, models, categories..." autocomplete="off" />
+          <div id="nodeCategoryFilters" class="category-filters" aria-label="Node categories"></div>
+          <div id="nodeLibrary" class="node-library"></div>
+        </section>
+
+        <section class="panel-section assets-section">
+          <header class="section-header">
+            <div>
+              <h2>Project Assets</h2>
+              <p class="muted">Generated and uploaded media.</p>
+            </div>
+          </header>
+          <div id="assetList" class="asset-list"></div>
+        </section>
+      </aside>
+
+      <section class="canvas-wrap studio-canvas-wrap" aria-label="Workflow canvas">
+        <div class="canvas-toolbar">
+          <div class="canvas-title">
+            <span class="eyebrow">Canvas</span>
+            <strong id="canvasProjectTitle">No project loaded</strong>
+          </div>
+          <div id="canvasStats" class="canvas-stats" aria-live="polite"></div>
+        </div>
+        <div id="canvasSelectionBar" class="canvas-selection-bar" aria-live="polite"></div>
+        <div id="canvas" class="canvas">
+          <div class="canvas-help empty-state">
+            <strong>Start building your workflow</strong>
+            <span>Start by adding Upload Image or Text to Image from the node library.</span>
+          </div>
+        </div>
+      </section>
+
+      <aside class="inspector studio-inspector" aria-label="Inspector">
+        <nav class="inspector-tabs" aria-label="Inspector sections">
+          <button type="button" class="inspector-tab active" data-inspector-tab="project" aria-selected="true">Project</button>
+          <button type="button" class="inspector-tab" data-inspector-tab="workflow" aria-selected="false">Workflow</button>
+          <button type="button" class="inspector-tab" data-inspector-tab="runs" aria-selected="false">Runs</button>
+          <button type="button" class="inspector-tab" data-inspector-tab="activity" aria-selected="false">Activity</button>
+        </nav>
+
+        <section id="projectTab" class="inspector-tab-panel active" data-inspector-panel="project">
+          <h2>Project</h2>
+          <label class="stack">
+            Name
+            <input id="projectName" />
+          </label>
+          <label class="stack">
+            Description
+            <textarea id="projectDescription" rows="4"></textarea>
+          </label>
+          <h2>Selection</h2>
+          <div id="selectedNodeLabel" class="muted">No node selected.</div>
+          <div id="selectedEdgePanel" class="edge-panel muted">No edge selected.</div>
+          <button type="button" id="deleteSelectedEdgeBtn" class="full-width danger-action" disabled>Delete Selected Edge</button>
+        </section>
+
+        <section id="workflowTab" class="inspector-tab-panel" data-inspector-panel="workflow" hidden>
+          <h2>Workflow</h2>
+          <div class="workflow-actions">
+            <button type="button" id="previewPlanBtn">Preview Plan</button>
+            <button type="button" id="runSelectedBtn">Run Selected</button>
+            <button type="button" id="runFromSelectedBtn">Run From Selected</button>
+            <button type="button" id="runWholeGraphBtn" class="primary-action">Run Whole Graph</button>
+            <button type="button" id="refreshRunsBtn">Refresh Runs</button>
+          </div>
+          <h2>Workflow Plan</h2>
+          <div id="workflowPlan" class="workflow-panel muted">No plan preview yet.</div>
+          <h2>Workflow Messages</h2>
+          <div id="workflowMessages" class="workflow-panel muted">No workflow messages.</div>
+        </section>
+
+        <section id="runsTab" class="inspector-tab-panel" data-inspector-panel="runs" hidden>
+          <h2>Run Manager</h2>
+          <div class="run-manager-actions">
+            <button type="button" id="refreshJobsBtn">Refresh Jobs</button>
+            <button type="button" id="clearCompletedJobsBtn">Clear Completed</button>
+          </div>
+          <div id="jobList" class="job-list muted">No jobs loaded.</div>
+          <h2>Run History</h2>
+          <div id="runHistory" class="workflow-panel muted">No runs loaded.</div>
+        </section>
+
+        <section id="activityTab" class="inspector-tab-panel" data-inspector-panel="activity" hidden>
+          <h2>Activity</h2>
+          <pre id="outputLog"></pre>
+        </section>
+      </aside>
+    </main>
+  </div>
 
   <div id="settingsPanelBackdrop" class="settings-backdrop hidden"></div>
   <section id="settingsPanel" class="settings-panel hidden" aria-label="Project settings">
@@ -145,6 +210,8 @@
       <div id="templateList" class="template-list"></div>
     </div>
   </section>
+
+  <div id="toastStack" class="toast-stack" aria-live="polite" aria-label="Notifications"></div>
 
   <script src="/app.js"></script>
 </body>
