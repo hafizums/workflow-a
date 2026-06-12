@@ -70,6 +70,26 @@ async def load_project_or_404(project_id: str) -> Project:
 
 
 async def execute_workflow(project: Project, run_type: str, mode: str, node_id: str | None = None) -> dict[str, Any]:
+    plan = build_workflow_plan(project=project, mode=mode, node_id=node_id)
+    if plan["errors"]:
+        raise HTTPException(
+            status_code=400,
+            detail={"ok": False, "errors": plan["errors"], "warnings": plan["warnings"]},
+        )
+
+    cost_errors = blocked_cost_errors(plan)
+    if cost_errors:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "ok": False,
+                "errors": cost_errors,
+                "warnings": plan["warnings"],
+                "cost_guard": plan["cost_guard"],
+                "estimated_total_cost_usd": plan["estimated_total_cost_usd"],
+            },
+        )
+
     graph, node_ids, warnings, errors = build_execution_plan(project=project, mode=mode, node_id=node_id)
     if errors:
         raise HTTPException(status_code=400, detail={"ok": False, "errors": errors, "warnings": warnings})
@@ -184,6 +204,39 @@ async def execute_workflow(project: Project, run_type: str, mode: str, node_id: 
     run["output_urls"] = output_urls
     await project_store.save_project(project)
     return workflow_run_response(True, project, run)
+
+
+def blocked_cost_errors(plan: dict[str, Any]) -> list[dict[str, Any]]:
+    errors: list[dict[str, Any]] = []
+    workflow_guard = plan.get("cost_guard") or {}
+    if workflow_guard.get("blocked"):
+        errors.append(
+            {
+                "code": "workflow_cost_guard_blocked",
+                "message": workflow_guard.get("message") or "Workflow blocked by local estimated cost guard.",
+                "details": {
+                    "estimated_total_cost_usd": plan.get("estimated_total_cost_usd"),
+                    "limit_usd": workflow_guard.get("limit_usd"),
+                },
+            }
+        )
+
+    for step in plan.get("steps", []):
+        step_guard = step.get("cost_guard") or {}
+        if step_guard.get("blocked"):
+            errors.append(
+                {
+                    "code": "step_cost_guard_blocked",
+                    "message": step_guard.get("message") or "Step blocked by local estimated cost guard.",
+                    "details": {
+                        "node_id": step.get("node_id"),
+                        "model_id": step.get("effective_model_id") or step.get("model_id"),
+                        "estimated_base_cost_usd": step.get("estimated_base_cost_usd"),
+                        "limit_usd": step_guard.get("limit_usd"),
+                    },
+                }
+            )
+    return errors
 
 
 def queue_or_skip_nodes(project: Project, node_ids: list[str], warnings: list[dict[str, Any]]) -> None:

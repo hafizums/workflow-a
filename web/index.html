@@ -17,6 +17,7 @@
       <button id="loadProjectBtn">Load</button>
       <button id="newProjectBtn">New Project</button>
       <button id="saveProjectBtn">Save Project</button>
+      <button id="projectSettingsBtn">Project Settings</button>
       <a href="/docs" target="_blank">API Docs</a>
     </div>
   </header>
@@ -65,6 +66,55 @@
       <pre id="outputLog"></pre>
     </aside>
   </main>
+
+  <div id="settingsPanelBackdrop" class="settings-backdrop hidden"></div>
+  <section id="settingsPanel" class="settings-panel hidden" aria-label="Project settings">
+    <header class="settings-header">
+      <div>
+        <h2>Project Settings</h2>
+        <p class="muted">Cost estimates are starting estimates only. Final WaveSpeed cost can vary by model settings.</p>
+      </div>
+      <button type="button" id="closeSettingsBtn">Close</button>
+    </header>
+
+    <div class="settings-content">
+      <section class="settings-section">
+        <h2>Cost Guard</h2>
+        <label class="checkbox-field settings-toggle">
+          <input id="costGuardEnabled" type="checkbox" />
+          Enable cost guard
+        </label>
+        <div class="settings-grid">
+          <label>
+            Warn above USD
+            <input id="costWarnAbove" type="number" min="0" step="0.001" placeholder="0.05" />
+          </label>
+          <label>
+            Max single run USD
+            <input id="costMaxSingle" type="number" min="0" step="0.001" placeholder="0.10" />
+          </label>
+          <label>
+            Max workflow run USD
+            <input id="costMaxWorkflow" type="number" min="0" step="0.001" placeholder="0.25" />
+          </label>
+        </div>
+        <label class="checkbox-field settings-toggle">
+          <input id="blockUnknownCost" type="checkbox" />
+          Block unknown-cost models
+        </label>
+      </section>
+
+      <section class="settings-section">
+        <h2>Model Overrides</h2>
+        <div id="modelOverrideList" class="model-override-list"></div>
+      </section>
+    </div>
+
+    <footer class="settings-footer">
+      <button type="button" id="saveSettingsBtn">Save Settings</button>
+      <button type="button" id="cancelSettingsBtn">Cancel</button>
+    </footer>
+  </section>
 
   <script src="/app.js"></script>
 </body>

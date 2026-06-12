@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.schemas import Asset, CanvasNode, Project
-from app.services.cost_estimator import evaluate_cost_guard
+from app.services.cost_estimator import ESTIMATE_WARNING, evaluate_cost_guard, evaluate_workflow_cost_guard
 from app.services.registry import resolve_model_for_node
 
 
@@ -350,17 +350,32 @@ def build_step(
         )
 
     guard = evaluate_cost_guard(model.estimated_base_cost_usd if model else None, project.settings.cost_guard)
+    output_kind = model.output_kind.value if model else None
 
     return {
         "index": index,
         "node_id": node.id,
         "node_type": node.type.value,
         "model_id": resolution.model_id,
+        "effective_model_id": resolution.model_id,
+        "node_model_id": node.model_id,
+        "project_override_model_id": project.settings.model_overrides.get(node.type.value),
+        "catalog_default_model_id": model.default_model_id if model else None,
         "model_source": resolution.source,
         "estimated_base_cost_usd": model.estimated_base_cost_usd if model else None,
+        "cost_unit": model.cost_unit if model else None,
+        "pricing_note": model.pricing_note if model else None,
+        "output_kind": output_kind,
         "requires_confirmation": guard["requires_confirmation"],
         "blocked": guard["blocked"],
         "cost_guard_message": guard["cost_guard_message"],
+        "cost_guard": {
+            "status": guard["status"],
+            "message": guard["message"],
+            "limit_usd": guard["limit_usd"],
+            "blocked": guard["blocked"],
+            "requires_confirmation": guard["requires_confirmation"],
+        },
         "display_name": model.label if model else node.title,
         "status": status,
         "resolved_inputs": resolved_inputs,
@@ -419,14 +434,42 @@ def plan_response(
     warnings: list[dict[str, Any]],
     errors: list[dict[str, Any]],
 ) -> dict[str, Any]:
+    cost_summary = workflow_cost_summary(steps, project)
     return {
         "ok": not errors,
         "project_id": project.id,
         "mode": mode,
         "node_ids": node_ids,
+        **cost_summary,
         "steps": steps,
         "warnings": warnings,
         "errors": errors,
+    }
+
+
+def workflow_cost_summary(steps: list[dict[str, Any]], project: Project) -> dict[str, Any]:
+    runnable_steps = [step for step in steps if step.get("status") == "ready"]
+    known_cost = 0.0
+    has_unknown_cost = False
+
+    for step in runnable_steps:
+        estimate = step.get("estimated_base_cost_usd")
+        if estimate is None:
+            has_unknown_cost = True
+            continue
+        known_cost += float(estimate)
+
+    estimated_total_cost_usd = None if has_unknown_cost else round(known_cost, 6)
+    guard = evaluate_workflow_cost_guard(
+        estimated_total_cost_usd=estimated_total_cost_usd,
+        has_unknown_cost=has_unknown_cost,
+        cost_guard=project.settings.cost_guard,
+    )
+    return {
+        "estimated_total_cost_usd": estimated_total_cost_usd,
+        "estimated_known_cost_usd": round(known_cost, 6),
+        "pricing_note": ESTIMATE_WARNING,
+        "cost_guard": guard,
     }
 
 

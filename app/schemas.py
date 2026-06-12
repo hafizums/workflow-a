@@ -5,7 +5,7 @@ from enum import Enum
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 
 
 def utc_now() -> datetime:
@@ -109,14 +109,85 @@ class CanvasEdge(BaseModel):
 
 
 class CostGuardSettings(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     enabled: bool = False
-    warn_at_usd_per_run: float | None = None
-    block_at_usd_per_run: float | None = None
+    warn_at_usd_per_run: float | None = Field(
+        default=None,
+        validation_alias=AliasChoices("warn_at_usd_per_run", "warn_above_usd"),
+    )
+    block_at_usd_per_run: float | None = Field(
+        default=None,
+        validation_alias=AliasChoices("block_at_usd_per_run", "max_single_run_usd"),
+    )
+    max_workflow_run_usd: float | None = None
+    block_on_unknown_cost: bool = False
+
+    @model_validator(mode="after")
+    def validate_costs(self):
+        cost_fields = {
+            "warn_at_usd_per_run": self.warn_at_usd_per_run,
+            "block_at_usd_per_run": self.block_at_usd_per_run,
+            "max_workflow_run_usd": self.max_workflow_run_usd,
+        }
+        for field_name, value in cost_fields.items():
+            if value is not None and value < 0:
+                raise ValueError(f"{field_name} must be greater than or equal to zero.")
+
+        if (
+            self.warn_at_usd_per_run is not None
+            and self.block_at_usd_per_run is not None
+            and self.warn_at_usd_per_run > self.block_at_usd_per_run
+        ):
+            raise ValueError("warn_at_usd_per_run cannot exceed block_at_usd_per_run.")
+        return self
 
 
 class ProjectSettings(BaseModel):
     model_overrides: Dict[str, str] = Field(default_factory=dict)
     cost_guard: CostGuardSettings = Field(default_factory=CostGuardSettings)
+
+
+class CostGuardSettingsUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    enabled: bool | None = None
+    warn_at_usd_per_run: float | None = Field(
+        default=None,
+        validation_alias=AliasChoices("warn_at_usd_per_run", "warn_above_usd"),
+    )
+    block_at_usd_per_run: float | None = Field(
+        default=None,
+        validation_alias=AliasChoices("block_at_usd_per_run", "max_single_run_usd"),
+    )
+    max_workflow_run_usd: float | None = None
+    block_on_unknown_cost: bool | None = None
+
+    @model_validator(mode="after")
+    def validate_costs(self):
+        cost_fields = {
+            "warn_at_usd_per_run": self.warn_at_usd_per_run,
+            "block_at_usd_per_run": self.block_at_usd_per_run,
+            "max_workflow_run_usd": self.max_workflow_run_usd,
+        }
+        for field_name, value in cost_fields.items():
+            if value is not None and value < 0:
+                raise ValueError(f"{field_name} must be greater than or equal to zero.")
+
+        if (
+            self.warn_at_usd_per_run is not None
+            and self.block_at_usd_per_run is not None
+            and self.warn_at_usd_per_run > self.block_at_usd_per_run
+        ):
+            raise ValueError("warn_at_usd_per_run cannot exceed block_at_usd_per_run.")
+        return self
+
+
+class ProjectSettingsUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    model_overrides: Optional[Dict[str, str]] = None
+    cost_guard: Optional[CostGuardSettingsUpdate] = None
 
 
 class Project(BaseModel):
@@ -237,6 +308,9 @@ class EstimateRunResponse(BaseModel):
     requires_confirmation: bool = False
     blocked: bool = False
     cost_guard_message: str | None = None
+    status: str | None = None
+    message: str | None = None
+    limit_usd: float | None = None
 
 
 class RunNodeResponse(BaseModel):

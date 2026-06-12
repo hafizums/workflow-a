@@ -4,12 +4,13 @@ const state = {
   models: [],
   selectedNodeId: null,
   workflowRunning: false,
+  settingsOpen: false,
 };
 
 const CARD_GAP_X = 330;
 const CARD_BRANCH_OFFSET_Y = 40;
 
-const NODE_DEFS = [
+const LOCAL_FALLBACK_NODE_DEFS = [
   {
     id: 'upload_image',
     title: 'Upload Image',
@@ -18,69 +19,8 @@ const NODE_DEFS = [
     description: 'Add a local source image asset.',
     runnable: false,
     upload: true,
+    enabled: true,
     defaults: {},
-  },
-  {
-    id: 'generate_image',
-    title: 'Generate Image',
-    type: 'text_to_image',
-    category: 'text-to-image',
-    model_id: 'wavespeed-ai/z-image/turbo',
-    description: 'Create an image from a prompt.',
-    runnable: true,
-    defaults: {
-      prompt: 'A clean modern product poster, studio lighting',
-      size: '1024*1024',
-      seed: -1,
-      output_format: 'jpeg',
-    },
-  },
-  {
-    id: 'remix_image',
-    title: 'Remix Image',
-    type: 'image_to_image',
-    category: 'image-to-image',
-    model_id: 'wavespeed-ai/z-image-turbo/image-to-image',
-    description: 'Transform a source image with a prompt.',
-    runnable: true,
-    defaults: {
-      prompt: 'Keep the subject, change the scene into a premium studio campaign',
-      image: '',
-      size: '1024*1024',
-      strength: 0.6,
-      seed: -1,
-      output_format: 'jpeg',
-    },
-  },
-  {
-    id: 'upscale_image',
-    title: 'Upscale Image',
-    type: 'upscale_image',
-    category: 'image-utility',
-    model_id: 'TODO_ADD_UPSCALE_MODEL_ID',
-    description: 'Placeholder until a WaveSpeed upscale model is verified.',
-    runnable: false,
-    defaults: { image: '' },
-  },
-  {
-    id: 'remove_background',
-    title: 'Remove Background',
-    type: 'remove_background',
-    category: 'image-utility',
-    model_id: 'TODO_ADD_REMOVE_BACKGROUND_MODEL_ID',
-    description: 'Placeholder until a WaveSpeed background removal model is verified.',
-    runnable: false,
-    defaults: { image: '' },
-  },
-  {
-    id: 'animate_image',
-    title: 'Animate Image',
-    type: 'image_to_video',
-    category: 'image-to-video',
-    model_id: 'TODO_ADD_IMAGE_TO_VIDEO_MODEL_ID',
-    description: 'Placeholder until a WaveSpeed image-to-video model is verified.',
-    runnable: false,
-    defaults: { prompt: 'Slow cinematic camera move', image: '', duration: 5 },
   },
 ];
 
@@ -113,17 +53,59 @@ function now() {
 }
 
 function nodeModel(node) {
-  return state.models.find((model) => model.id === node.model_id || model.default_model_id === node.model_id)
-    || state.models.find((model) => model.node_type === node.type && model.enabled);
+  return modelResolution(node).model;
+}
+
+function modelResolution(node) {
+  const nodeModelId = node.model_id && !node.model_id.startsWith('TODO_') ? node.model_id : '';
+  const projectOverrideId = state.project?.settings?.model_overrides?.[node.type] || '';
+  const compatibleModels = state.models.filter((model) => model.node_type === node.type);
+  const catalogDefault = compatibleModels.find((model) => model.enabled) || compatibleModels[0] || null;
+
+  if (nodeModelId) {
+    const model = compatibleModels.find((item) => item.id === nodeModelId || item.default_model_id === nodeModelId) || null;
+    return {
+      model,
+      effective_model_id: model?.default_model_id || model?.id || nodeModelId,
+      source: 'node override',
+      node_model_id: nodeModelId,
+      project_override_model_id: projectOverrideId,
+      catalog_default_model_id: catalogDefault?.default_model_id || catalogDefault?.id || '',
+      override_active: true,
+      error: model ? '' : `Model ${nodeModelId} is not registered for ${node.type}.`,
+    };
+  }
+
+  if (projectOverrideId) {
+    const model = compatibleModels.find((item) => item.id === projectOverrideId || item.default_model_id === projectOverrideId) || null;
+    return {
+      model,
+      effective_model_id: model?.default_model_id || model?.id || projectOverrideId,
+      source: 'project override',
+      node_model_id: '',
+      project_override_model_id: projectOverrideId,
+      catalog_default_model_id: catalogDefault?.default_model_id || catalogDefault?.id || '',
+      override_active: true,
+      error: model ? '' : `Project override ${projectOverrideId} is not registered for ${node.type}.`,
+    };
+  }
+
+  return {
+    model: catalogDefault,
+    effective_model_id: catalogDefault?.default_model_id || catalogDefault?.id || '',
+    source: 'catalog default',
+    node_model_id: '',
+    project_override_model_id: '',
+    catalog_default_model_id: catalogDefault?.default_model_id || catalogDefault?.id || '',
+    override_active: false,
+    error: catalogDefault ? '' : `No catalog model is registered for ${node.type}.`,
+  };
 }
 
 function nodeDefByType(node) {
-  const model = nodeModel(node) || state.models.find((item) => item.node_type === node.type && item.enabled);
+  const model = nodeModel(node) || state.models.find((item) => item.node_type === node.type);
   if (model) return modelToNodeDef(model);
-  if (node.type === 'text_to_image') return NODE_DEFS.find((item) => item.id === 'generate_image');
-  if (node.type === 'image_to_image') return NODE_DEFS.find((item) => item.id === 'remix_image');
-  if (node.type === 'image_to_video') return NODE_DEFS.find((item) => item.id === 'animate_image');
-  return NODE_DEFS.find((item) => item.type === node.type) || allNodeDefs().find((item) => item.type === node.type);
+  return LOCAL_FALLBACK_NODE_DEFS.find((item) => item.type === node.type) || allNodeDefs().find((item) => item.type === node.type);
 }
 
 function assetUrl(asset) {
@@ -204,6 +186,156 @@ async function saveProject() {
   log('Project saved.');
 }
 
+async function fetchProjectSettings() {
+  if (!state.project) return null;
+  const settings = await api(`/api/projects/${state.project.id}/settings`);
+  state.project.settings = settings;
+  return settings;
+}
+
+async function openProjectSettings() {
+  if (!state.project) return log('Create or load a project first.');
+  try {
+    await fetchProjectSettings();
+    state.settingsOpen = true;
+    renderSettingsPanel();
+  } catch (error) {
+    log(error.message);
+  }
+}
+
+function closeProjectSettings() {
+  state.settingsOpen = false;
+  renderSettingsPanel();
+}
+
+function projectSettings() {
+  if (!state.project.settings) {
+    state.project.settings = {
+      model_overrides: {},
+      cost_guard: {},
+    };
+  }
+  state.project.settings.model_overrides ||= {};
+  state.project.settings.cost_guard ||= {};
+  return state.project.settings;
+}
+
+function renderSettingsPanel() {
+  const panel = qs('#settingsPanel');
+  const backdrop = qs('#settingsPanelBackdrop');
+  panel.classList.toggle('hidden', !state.settingsOpen);
+  backdrop.classList.toggle('hidden', !state.settingsOpen);
+  if (!state.settingsOpen || !state.project) return;
+
+  const settings = projectSettings();
+  const guard = settings.cost_guard || {};
+  qs('#costGuardEnabled').checked = !!guard.enabled;
+  qs('#costWarnAbove').value = numberInputValue(guard.warn_at_usd_per_run);
+  qs('#costMaxSingle').value = numberInputValue(guard.block_at_usd_per_run);
+  qs('#costMaxWorkflow').value = numberInputValue(guard.max_workflow_run_usd);
+  qs('#blockUnknownCost').checked = !!guard.block_on_unknown_cost;
+  renderModelOverrides(settings.model_overrides || {});
+}
+
+function numberInputValue(value) {
+  return value === null || value === undefined ? '' : String(value);
+}
+
+function renderModelOverrides(overrides) {
+  const list = qs('#modelOverrideList');
+  const runnableGroups = runnableModelGroups();
+  if (!runnableGroups.length) {
+    list.innerHTML = '<div class="muted">No runnable model overrides are available.</div>';
+    return;
+  }
+
+  list.innerHTML = runnableGroups.map((group) => {
+    const current = overrides[group.node_type] || '';
+    return `
+      <div class="override-row" data-node-type="${attr(group.node_type)}">
+        <div class="override-copy">
+          <strong>${escapeHtml(group.label)}</strong>
+          <span>Default: ${escapeHtml(group.default_model_id || group.models[0]?.id || 'none')}</span>
+        </div>
+        <select data-setting-override="${attr(group.node_type)}">
+          <option value="">Use catalog default</option>
+          ${group.models.map((model) => {
+            const modelId = model.default_model_id || model.id;
+            return `<option value="${attr(modelId)}" ${modelId === current ? 'selected' : ''}>${escapeHtml(modelId)}</option>`;
+          }).join('')}
+        </select>
+        <button type="button" data-reset-override="${attr(group.node_type)}">Reset</button>
+      </div>
+    `;
+  }).join('');
+
+  list.querySelectorAll('[data-reset-override]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const select = list.querySelector(`[data-setting-override="${cssEscape(button.dataset.resetOverride)}"]`);
+      if (select) select.value = '';
+    });
+  });
+}
+
+function runnableModelGroups() {
+  const groups = new Map();
+  state.models
+    .filter((model) => model.enabled && model.default_model_id && model.node_type !== 'upload_image')
+    .forEach((model) => {
+      const existing = groups.get(model.node_type) || {
+        node_type: model.node_type,
+        label: model.label || model.display_name || model.node_type,
+        default_model_id: model.default_model_id,
+        models: [],
+      };
+      existing.models.push(model);
+      groups.set(model.node_type, existing);
+    });
+  return Array.from(groups.values());
+}
+
+function settingsPayloadFromPanel() {
+  const modelOverrides = {};
+  qs('#modelOverrideList').querySelectorAll('[data-setting-override]').forEach((select) => {
+    if (select.value) {
+      modelOverrides[select.dataset.settingOverride] = select.value;
+    }
+  });
+
+  return {
+    model_overrides: modelOverrides,
+    cost_guard: {
+      enabled: qs('#costGuardEnabled').checked,
+      warn_at_usd_per_run: optionalNumber('#costWarnAbove'),
+      block_at_usd_per_run: optionalNumber('#costMaxSingle'),
+      max_workflow_run_usd: optionalNumber('#costMaxWorkflow'),
+      block_on_unknown_cost: qs('#blockUnknownCost').checked,
+    },
+  };
+}
+
+function optionalNumber(selector) {
+  const value = qs(selector).value.trim();
+  return value === '' ? null : Number(value);
+}
+
+async function saveProjectSettings() {
+  if (!state.project) return log('Create or load a project first.');
+  try {
+    const settings = await api(`/api/projects/${state.project.id}/settings`, {
+      method: 'PUT',
+      body: JSON.stringify(settingsPayloadFromPanel()),
+    });
+    state.project.settings = settings;
+    closeProjectSettings();
+    renderAll();
+    log('Project settings saved.');
+  } catch (error) {
+    log(error.message);
+  }
+}
+
 async function persistProjectSilently() {
   if (!state.project) return;
   updateProjectFieldsFromForm();
@@ -219,28 +351,30 @@ function renderNodeLibrary() {
   library.innerHTML = '';
   allNodeDefs().forEach((def) => {
     const item = document.createElement('div');
-    item.className = `library-item ${def.runnable ? 'enabled' : 'disabled'}`;
+    const enabled = def.enabled !== false;
+    item.className = `library-item ${enabled ? 'enabled' : 'disabled'}`;
     item.innerHTML = `
       <strong>${escapeHtml(def.title)}</strong>
       <div class="badge-row">
         <span class="badge">${escapeHtml(def.category)}</span>
         <span class="badge">${escapeHtml(def.output_kind || 'local')}</span>
-        <span class="badge ${def.runnable ? 'ok' : 'muted-badge'}">${def.runnable ? 'enabled' : 'disabled'}</span>
+        <span class="badge ${enabled ? 'ok' : 'muted-badge'}">${enabled ? 'enabled' : 'disabled'}</span>
       </div>
-      <div class="library-meta">${escapeHtml(costLabel(def))} · ${escapeHtml(def.verification_status || 'local')}</div>
+      <div class="library-meta">${escapeHtml(costLabel(def))} - ${escapeHtml(def.verification_status || 'local')}</div>
       <p>${escapeHtml(def.description)}</p>
-      ${def.enabled_reason && !def.runnable ? `<div class="disabled-reason">${escapeHtml(def.enabled_reason)}</div>` : ''}
-      <button type="button">Add Node</button>
+      ${def.enabled_reason && !enabled ? `<div class="disabled-reason">${escapeHtml(def.enabled_reason)}</div>` : ''}
+      <button type="button" ${enabled ? '' : 'disabled'}>${enabled ? 'Add Node' : 'Coming Soon'}</button>
     `;
-    item.querySelector('button').addEventListener('click', () => addNode(def));
+    item.querySelector('button').addEventListener('click', () => {
+      if (enabled) addNode(def);
+    });
     library.appendChild(item);
   });
 }
 
 function allNodeDefs() {
-  const localDefs = NODE_DEFS.filter((def) => def.upload);
-  const registryDefs = state.models.map(modelToNodeDef);
-  return [...localDefs, ...registryDefs];
+  if (!state.models.length) return LOCAL_FALLBACK_NODE_DEFS;
+  return state.models.map(modelToNodeDef);
 }
 
 function modelToNodeDef(model) {
@@ -251,7 +385,9 @@ function modelToNodeDef(model) {
     category: model.category,
     model_id: model.id,
     description: model.description,
-    runnable: model.enabled,
+    runnable: model.enabled && model.node_type !== 'upload_image',
+    enabled: model.enabled,
+    upload: model.node_type === 'upload_image',
     output_kind: model.output_kind,
     estimated_base_cost_usd: model.estimated_base_cost_usd,
     cost_unit: model.cost_unit,
@@ -311,14 +447,34 @@ function renderCostNote(item) {
   `;
 }
 
+function renderModelDetails(node, resolution, item, outputKind) {
+  if (node.type === 'upload_image') {
+    return renderCostNote(item);
+  }
+  const effectiveModelId = resolution.effective_model_id || item?.model_id || item?.id || 'No model';
+  const sourceClass = resolution.source === 'project override' ? 'ok' : '';
+  return `
+    <div class="node-cost">
+      <span>Model: ${escapeHtml(effectiveModelId)}</span>
+      <small>Cost: ${escapeHtml(costLabel(item))}</small>
+      <small>Output: ${escapeHtml(outputKind)}</small>
+      <small>Source: <strong class="${sourceClass}">${escapeHtml(resolution.source)}</strong></small>
+      ${resolution.project_override_model_id ? `<small>Project override: ${escapeHtml(resolution.project_override_model_id)}</small>` : ''}
+      ${resolution.error ? `<small>${escapeHtml(resolution.error)}</small>` : ''}
+      ${item?.pricing_note ? `<small>${escapeHtml(item.pricing_note)}</small>` : ''}
+    </div>
+  `;
+}
+
 function addNode(def) {
   if (!state.project) return log('Create or load a project first.');
+  if (def.enabled === false) return log('This node is disabled until the model is ready.');
   const index = state.project.nodes.length;
   const node = {
     id: `node_${crypto.randomUUID().replaceAll('-', '').slice(0, 12)}`,
     type: def.type,
     title: def.title,
-    model_id: def.model_id || null,
+    model_id: null,
     estimated_base_cost_usd: def.estimated_base_cost_usd ?? null,
     x: 80 + (index % 3) * 300,
     y: 80 + Math.floor(index / 3) * 360,
@@ -341,6 +497,7 @@ function renderAll() {
   renderCanvas();
   renderAssets();
   renderWorkflowPanels();
+  renderSettingsPanel();
   updateWorkflowButtons();
 }
 
@@ -372,7 +529,8 @@ function renderCanvas() {
 
 function nodeCardHtml(node) {
   const def = nodeDefByType(node) || {};
-  const model = nodeModel(node);
+  const resolution = modelResolution(node);
+  const model = resolution.model;
   const isRunnable = !!model?.enabled && def.runnable !== false;
   const outputKind = model?.output_kind || def.output_kind || outputKindFromNodeType(node.type);
   return `
@@ -388,7 +546,7 @@ function nodeCardHtml(node) {
       <span class="badge ${model?.enabled ? 'ok' : 'muted-badge'}">${model?.enabled ? 'enabled' : 'disabled'}</span>
       <span class="badge">${escapeHtml(model?.verification_status || def.verification_status || 'local')}</span>
     </div>
-    ${renderCostNote(model || def)}
+    ${renderModelDetails(node, resolution, model || def, outputKind)}
     ${renderNodeFields(node)}
     ${renderUploadControls(node, def)}
     ${renderPlaceholderNotice(node, def, model)}
@@ -675,12 +833,13 @@ function branchFromNode(sourceNodeId) {
   if (!sourceNode || !outputUrl) return log('Run this image node before branching.');
 
   const remixModel = state.models.find((model) => model.node_type === 'image_to_image' && model.enabled);
-  const remixDef = remixModel ? modelToNodeDef(remixModel) : NODE_DEFS.find((item) => item.id === 'remix_image');
+  if (!remixModel) return log('No enabled remix model is available.');
+  const remixDef = modelToNodeDef(remixModel);
   const childNode = {
     id: `node_${crypto.randomUUID().replaceAll('-', '').slice(0, 12)}`,
     type: remixDef.type,
     title: 'Remix Image',
-    model_id: remixDef.model_id,
+    model_id: null,
     estimated_base_cost_usd: remixDef.estimated_base_cost_usd ?? null,
     x: Math.round((Number(sourceNode.x) || 80) + CARD_GAP_X),
     y: Math.round((Number(sourceNode.y) || 80) + CARD_BRANCH_OFFSET_Y),
@@ -725,7 +884,7 @@ function branchToVideoFromNode(sourceNodeId) {
     id: `node_${crypto.randomUUID().replaceAll('-', '').slice(0, 12)}`,
     type: videoDef.type,
     title: 'Image to Video',
-    model_id: videoDef.model_id,
+    model_id: null,
     estimated_base_cost_usd: videoDef.estimated_base_cost_usd ?? null,
     x: Math.round((Number(sourceNode.x) || 80) + CARD_GAP_X),
     y: Math.round((Number(sourceNode.y) || 80) + CARD_BRANCH_OFFSET_Y + 120),
@@ -934,6 +1093,7 @@ async function previewWorkflowPlan() {
 async function runSelectedWorkflowNode() {
   const node = selectedNode();
   if (!node) return showSelectNodeError();
+  if (!await confirmWorkflowPlan('selected', node.id)) return;
   await runWorkflowRequest(`/api/workflows/${state.project.id}/run-selected`, {
     method: 'POST',
     body: JSON.stringify({ node_id: node.id }),
@@ -943,6 +1103,7 @@ async function runSelectedWorkflowNode() {
 async function runFromSelectedNode() {
   const node = selectedNode();
   if (!node) return showSelectNodeError();
+  if (!await confirmWorkflowPlan('from_node', node.id)) return;
   await runWorkflowRequest(`/api/workflows/${state.project.id}/run-from-node/${node.id}`, {
     method: 'POST',
   });
@@ -950,9 +1111,36 @@ async function runFromSelectedNode() {
 
 async function runWholeGraph() {
   if (!state.project) return log('Create or load a project first.');
+  if (!await confirmWorkflowPlan('whole_graph')) return;
   await runWorkflowRequest(`/api/workflows/${state.project.id}/run-all`, {
     method: 'POST',
   });
+}
+
+async function confirmWorkflowPlan(mode, nodeId = '') {
+  await persistProjectSilently();
+  const params = new URLSearchParams({ mode });
+  if (nodeId) params.set('node_id', nodeId);
+  const plan = await api(`/api/workflows/${state.project.id}/plan?${params}`);
+  renderWorkflowPlan(plan);
+  renderWorkflowMessages(plan.warnings || [], plan.errors || []);
+  if (plan.errors?.length) {
+    log(plan);
+    return false;
+  }
+  if (plan.cost_guard?.blocked || (plan.steps || []).some((step) => step.cost_guard?.blocked)) {
+    renderWorkflowMessages(plan.warnings || [], [{
+      message: plan.cost_guard?.message || 'Workflow blocked by local estimated cost guard.',
+    }]);
+    log(plan);
+    return false;
+  }
+  const needsConfirmation = plan.cost_guard?.requires_confirmation
+    || (plan.steps || []).some((step) => step.cost_guard?.requires_confirmation);
+  if (needsConfirmation) {
+    return window.confirm(`${plan.cost_guard?.message || 'Workflow cost warning.'}\n\n${plan.pricing_note || ''}`);
+  }
+  return true;
 }
 
 async function runWorkflowRequest(path, options) {
@@ -1013,15 +1201,33 @@ function renderWorkflowPlan(plan) {
     return;
   }
   panel.className = 'workflow-panel';
-  panel.innerHTML = steps.map((step) => `
+  const summary = `
+    <div class="workflow-step workflow-summary ${escapeHtml(plan.cost_guard?.status || 'ok')}">
+      <strong>Total: ${escapeHtml(workflowTotalLabel(plan))}</strong>
+      <span>Guard: ${escapeHtml(plan.cost_guard?.status || 'ok')}</span>
+      ${plan.cost_guard?.message ? `<small>${escapeHtml(plan.cost_guard.message)}</small>` : ''}
+      ${plan.pricing_note ? `<small>${escapeHtml(plan.pricing_note)}</small>` : ''}
+    </div>
+  `;
+  panel.innerHTML = summary + steps.map((step) => `
     <div class="workflow-step">
       <strong>${step.index + 1}. ${escapeHtml(step.display_name || step.node_id)}</strong>
       <span>${escapeHtml(step.node_type)} - ${escapeHtml(step.status)} - ${escapeHtml(costLabel(step))}</span>
-      <small>${escapeHtml(step.model_id || 'no model')} (${escapeHtml(step.model_source || 'node')})</small>
+      <small>${escapeHtml(step.effective_model_id || step.model_id || 'no model')} (${escapeHtml(step.model_source || 'node')})</small>
       <small>${escapeHtml(step.resolved_input_keys?.join(', ') || 'no inputs')}</small>
-      ${step.cost_guard_message ? `<small>${escapeHtml(step.cost_guard_message)}</small>` : ''}
+      ${step.cost_guard?.message ? `<small>${escapeHtml(step.cost_guard.message)}</small>` : ''}
     </div>
   `).join('');
+}
+
+function workflowTotalLabel(plan) {
+  if (plan.estimated_total_cost_usd === null || plan.estimated_total_cost_usd === undefined) {
+    if (plan.estimated_known_cost_usd) {
+      return `known from $${Number(plan.estimated_known_cost_usd).toFixed(3)}`;
+    }
+    return 'cost unknown';
+  }
+  return `from $${Number(plan.estimated_total_cost_usd).toFixed(3)}`;
 }
 
 function renderWorkflowMessages(warnings = [], errors = []) {
@@ -1180,6 +1386,11 @@ async function boot() {
 qs('#newProjectBtn').addEventListener('click', createProject);
 qs('#saveProjectBtn').addEventListener('click', saveProject);
 qs('#loadProjectBtn').addEventListener('click', loadSelectedProject);
+qs('#projectSettingsBtn').addEventListener('click', openProjectSettings);
+qs('#closeSettingsBtn').addEventListener('click', closeProjectSettings);
+qs('#cancelSettingsBtn').addEventListener('click', closeProjectSettings);
+qs('#settingsPanelBackdrop').addEventListener('click', closeProjectSettings);
+qs('#saveSettingsBtn').addEventListener('click', saveProjectSettings);
 qs('#projectName').addEventListener('input', updateProjectFieldsFromForm);
 qs('#projectDescription').addEventListener('input', updateProjectFieldsFromForm);
 qs('#previewPlanBtn').addEventListener('click', previewWorkflowPlan);
