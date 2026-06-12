@@ -2,11 +2,11 @@
 
 ## One-Paragraph Summary
 
-This project is a FastAPI plus vanilla HTML/CSS/JS MVP for an AI canvas workflow app inspired by Figma Weave, but intentionally without professional editing tools. Users can create/load local projects, add draggable catalog-driven node cards, upload assets, run supported WaveSpeed nodes, branch generated outputs, preview media, save node state and positions, configure project settings, use model overrides, estimate local node/workflow cost, run one node or simple graph workflows, export/import portable workflow JSON, duplicate projects, and reuse built-in or local workflow templates. The backend uses local JSON files and local upload/template folders only; there is no database, auth, billing system, React, Next.js, Tailwind, or hardcoded secret.
+This project is a FastAPI plus vanilla HTML/CSS/JS MVP for an AI canvas workflow app inspired by Figma Weave, but intentionally without professional editing tools. Users can create/load local projects, add draggable catalog-driven node cards, manually wire nodes with visual handles, upload assets, run supported WaveSpeed nodes, branch generated outputs, preview media, save node state and positions, configure project settings, use model overrides, estimate local node/workflow cost, run one node or simple graph workflows, export/import portable workflow JSON, duplicate projects, and reuse built-in or local workflow templates. The backend uses local JSON files and local upload/template folders only; there is no database, auth, billing system, React, Next.js, Tailwind, or hardcoded secret.
 
 ## Product Goal
 
-Build a simple AI canvas for composing generation workflows around WaveSpeed models. The MVP should make it easy to create a project, add media-generation nodes, provide inputs through simple forms, upload or select source assets, run nodes, preview outputs, branch from outputs, save/reload state, and keep the model registry extensible for future WaveSpeed categories.
+Build a simple AI canvas for composing generation workflows around WaveSpeed models. The MVP should make it easy to create a project, add media-generation nodes, wire compatible nodes, provide inputs through simple forms, upload or select source assets, run nodes, preview outputs, branch from outputs, save/reload state, and keep the model registry extensible for future WaveSpeed categories.
 
 ## Non-Goals
 
@@ -56,7 +56,7 @@ Build a simple AI canvas for composing generation workflows around WaveSpeed mod
 ## Current Frontend Files
 
 - `web/index.html`: top bar, node library, canvas, inspector, workflow panels, log area.
-- `web/app.js`: project loading/saving, model library rendering, node forms, node dragging, connection SVGs, upload handling, run handling, workflow actions, asset panel, previews, branching.
+- `web/app.js`: project loading/saving, model library rendering, node forms, node dragging, visual handle wiring, connection SVGs, edge selection/deletion, upload handling, run handling, workflow actions, asset panel, previews, branching.
 - `web/style.css`: dark three-column MVP layout, node card styles, canvas grid, media previews, workflow panels, responsive fallback.
 
 ## Current API Endpoints
@@ -151,6 +151,10 @@ Built-in templates:
 - UGC Starter
 - Voiceover Only
 
+## TASK_V6 Summary
+
+TASK_V6 is implemented. It added Visual Connector Editor v1 without React or a graph library. Node cards show output handles and media input handles. Users can drag from an output handle to a compatible input handle, see a ghost connector, create a validated edge immediately, save/reload the edge in project JSON, select an edge, delete the selected edge, and see connected-input badges with source-node hints. Frontend validation blocks self-loops, exact duplicates, obvious cycles, missing source/target/input, and known incompatible media connections. Branch shortcuts remain available and use the same edge helper. Tests in `tests/test_v6.py` cover backend edge compatibility, workflow planning behavior, and V5 portability/template preservation for V6 edge fields.
+
 ## Current Frontend Behavior
 
 - Opens at `http://localhost:8000`.
@@ -163,7 +167,10 @@ Built-in templates:
 - Opens a Templates panel to create projects from built-in/user templates.
 - Saves the current project as a reusable local user template.
 - Lets users drag nodes with a move handle and saves `x`/`y` in project JSON after saving.
-- Draws SVG connection lines for project edges.
+- Lets users manually drag from output handles to media input handles to create edges.
+- Draws SVG connection lines from handle positions, with target-input labels and selected-edge styling.
+- Lets users select and delete edges, including via the `Delete Selected Edge` button or Delete/Backspace key.
+- Shows connected-input badges and disconnect actions on node input fields.
 - Upload node stores local assets and can optionally upload to WaveSpeed.
 - Node fields are generated from model field specs where available.
 - Node cards show effective model, output kind, estimated cost, and model source.
@@ -181,7 +188,7 @@ Built-in templates:
 - WaveSpeed calls are synchronous request/response polling through the SDK; no job queue, retries, cancellation, or progress streaming.
 - Cost estimates are local starting estimates, not exact billing or real usage metering.
 - Only the first upstream output URL is used for workflow input mapping.
-- Frontend connector creation is branch-button based, not a full visual connector editor.
+- Visual connector editing is intentionally simple: no zoom/pan, minimap, multi-select, or advanced edge routing.
 - Local upload/project files can accumulate without cleanup tooling.
 - JSON portability does not bundle binary asset files; remote URLs may still work, but local upload URLs are not portable across machines.
 - Disabled model candidates may have model IDs but do not have verified request parameters or required UX.
@@ -222,23 +229,26 @@ Then open:
 12. Click Import Project and select the exported JSON, then confirm a new project loads with the same workflow shape.
 13. Click Duplicate Project and confirm a copied project loads.
 14. Open Templates, create a project from Basic Image Remix, save a user template from the current project, and delete that user template.
+15. Add Text to Image and Image to Image nodes, drag from the Text to Image output handle to the Image to Image `image` input handle, and confirm an edge label appears.
+16. Save, refresh, reload, and confirm the manual edge remains.
+17. Click the edge, delete it, reconnect it, and confirm Preview Plan uses the connection.
 
 ## Current Bugs/Risks
 
 - The folder is not currently a Git repository, so tracked/untracked file status cannot be checked with `git status`.
-- Automated browser visual testing was not available in this environment because the in-app browser backend reported `iab` unavailable. HTTP smoke checks against `/`, `/docs`, and `/api/templates` passed.
+- Automated browser visual testing may be unavailable in some Codex sessions if the in-app browser backend reports `iab` unavailable. In that case, use HTTP smoke checks and manual browser validation.
 - Live WaveSpeed runs were not re-tested during TASK_V4 documentation.
 - If a user selects a local `localhost` asset URL for WaveSpeed image input, the runner rejects it and asks for a WaveSpeed-uploaded asset or public URL, because WaveSpeed cannot fetch localhost.
 
 ## Recommended Next Major Task
 
-Add a visual connector editor without React, or add local run progress/cancellation. Database/auth/billing/React remain premature until the local single-user workflow is steadier.
+Add local run progress/cancellation or asset cleanup/storage management. Database/auth/billing/React remain premature until the local single-user workflow is steadier.
 
 ## Compact Upload Context
 
 This is a FastAPI + vanilla HTML/CSS/JS MVP AI canvas app for WaveSpeed workflows. Backend files live in `app/`; frontend files live in `web/`; local project JSON is stored under `data/projects`; uploads go to `data/uploads` and are served from `/uploads`; the frontend is served at `/`. Secrets must stay in environment variables only, especially `WAVESPEED_API_KEY`.
 
-The app currently supports local projects, draggable catalog-driven node cards, node `x`/`y` persistence, local asset upload with optional WaveSpeed upload, model registry/catalog endpoints, project settings, model overrides, local cost guard, node execution, workflow planning/execution, run history, output assets, media previews, branch creation from image outputs to remix or image-to-video nodes, portable project JSON export/import, local project duplication, and reusable workflow templates.
+The app currently supports local projects, draggable catalog-driven node cards, node `x`/`y` persistence, visual handle-based edge wiring, edge labels/selection/deletion, connected-input badges, local asset upload with optional WaveSpeed upload, model registry/catalog endpoints, project settings, model overrides, local cost guard, node execution, workflow planning/execution, run history, output assets, media previews, branch creation from image outputs to remix or image-to-video nodes, portable project JSON export/import, local project duplication, and reusable workflow templates.
 
 Core endpoints: `/api/health`, `/api/categories`, `/api/models`, `/api/model-catalog`, `/api/model-catalog/cheapest`, `/api/projects`, `/api/projects/{project_id}/settings`, `/api/projects/{project_id}/export`, `/api/projects/import`, `/api/projects/{project_id}/duplicate`, `/api/templates`, `/api/assets/upload`, `/api/runs/estimate`, `/api/runs/node`, `/api/workflows/{project_id}/plan`, `/api/workflows/{project_id}/run-selected`, `/api/workflows/{project_id}/run-from-node/{node_id}`, `/api/workflows/{project_id}/run-all`, `/api/workflows/{project_id}/runs`, `/docs`, and `/`.
 
@@ -246,4 +256,4 @@ Enabled runnable WaveSpeed models are `wavespeed-ai/z-image/turbo` for text-to-i
 
 TASK_V2 is implemented: workflow graph planning, selected/from-node/all runs, run history, edge normalization, cycle detection, topological order, and frontend workflow controls. TASK_V3 is implemented: richer model catalog, overrides/cost guard schemas, cost estimator, enabled verified safe models, frontend catalog UI, media previews, asset grid, branch-to-video, and tests. TASK_V4 is implemented: settings endpoints/UI, override validation, workflow cost totals, workflow cost blocking, catalog-driven node library cleanup, node effective-model display, and tests.
 
-Validation commands: `python -m compileall app`, `node --check web/app.js`, `python -m unittest discover -s tests -v`, and `python -m uvicorn app.main:app --reload --port 8000`. Manual test: open `http://localhost:8000`, create project, add/run Text to Image, branch to Remix, upload/select asset, run remix/upscale/remove-background/image-to-video, save, refresh, reload, and verify positions/previews persist.
+Validation commands: `python -m compileall app`, `node --check web/app.js`, `python -m unittest discover -s tests -v`, and `python -m uvicorn app.main:app --reload --port 8000`. Manual test: open `http://localhost:8000`, create project, add Text to Image and Image to Image, drag output to `image` input, save, refresh, reload, verify edge persistence, run/preview the workflow, branch to Remix, upload/select asset, run remix/upscale/remove-background/image-to-video, and verify positions/previews persist.

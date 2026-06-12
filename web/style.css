@@ -212,9 +212,36 @@ textarea { font-family: Consolas, ui-monospace, monospace; resize: vertical; }
   fill: none;
   stroke: rgba(85, 185, 141, .75);
   stroke-width: 2.5;
+  pointer-events: stroke;
+  cursor: pointer;
+}
+.connection-path.selected {
+  stroke: #d6b85c;
+  stroke-width: 3.5;
+}
+.connection-path.ghost {
+  stroke: rgba(214, 184, 92, .86);
+  stroke-dasharray: 8 7;
+  pointer-events: none;
 }
 .connection-arrow {
   fill: rgba(85, 185, 141, .85);
+}
+.connection-label {
+  pointer-events: auto;
+  cursor: pointer;
+}
+.connection-label rect {
+  fill: rgba(15, 18, 22, .94);
+  stroke: rgba(85, 185, 141, .45);
+}
+.connection-label.selected rect {
+  stroke: rgba(214, 184, 92, .9);
+}
+.connection-label text {
+  fill: var(--text);
+  font-size: 11px;
+  font-weight: 700;
 }
 .canvas-node {
   position: absolute;
@@ -226,6 +253,60 @@ textarea { font-family: Consolas, ui-monospace, monospace; resize: vertical; }
   padding: 12px;
   z-index: 3;
   touch-action: none;
+}
+.node-handle {
+  position: absolute;
+  width: 18px;
+  height: 18px;
+  min-height: 0;
+  padding: 0;
+  border-radius: 50%;
+  border: 2px solid rgba(85, 185, 141, .9);
+  background: var(--field);
+  color: transparent;
+  z-index: 4;
+}
+.node-handle:hover {
+  border-color: var(--accent-2);
+  transform: scale(1.08);
+}
+.node-handle span {
+  position: absolute;
+  top: -2px;
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: 10px;
+  pointer-events: none;
+}
+.output-handle {
+  right: -10px;
+  top: 72px;
+  cursor: crosshair;
+}
+.output-handle span {
+  left: 22px;
+}
+.input-handle-rail {
+  position: absolute;
+  left: -10px;
+  top: 142px;
+  display: flex;
+  flex-direction: column;
+  gap: 36px;
+  z-index: 4;
+}
+.input-handle {
+  position: relative;
+  left: 0;
+  top: 0;
+  cursor: copy;
+}
+.input-handle span {
+  right: 22px;
+  max-width: 82px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: right;
 }
 .canvas-node.dragging {
   cursor: grabbing;
@@ -305,6 +386,25 @@ textarea { font-family: Consolas, ui-monospace, monospace; resize: vertical; }
   color: var(--muted);
   font-size: 12px;
   margin-top: 10px;
+}
+.connected-input-badge {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  border: 1px solid rgba(85, 185, 141, .4);
+  border-radius: 8px;
+  background: rgba(85, 185, 141, .08);
+  color: #a9e3c8;
+  font-size: 11px;
+  line-height: 1.25;
+  margin-top: 5px;
+  padding: 5px 6px;
+}
+.connected-input-badge button {
+  flex: 0 0 auto;
+  font-size: 11px;
+  padding: 3px 6px;
 }
 .canvas-node label input,
 .canvas-node label textarea,
@@ -456,6 +556,26 @@ textarea { font-family: Consolas, ui-monospace, monospace; resize: vertical; }
   grid-template-columns: 1fr;
   gap: 8px;
   margin-bottom: 10px;
+}
+.full-width {
+  width: 100%;
+}
+.edge-panel {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--field);
+  font-size: 12px;
+  line-height: 1.4;
+  margin: 10px 0 8px;
+  padding: 9px;
+}
+.edge-panel strong,
+.edge-panel span,
+.edge-panel small {
+  display: block;
+}
+.edge-panel small {
+  color: var(--muted);
 }
 .settings-backdrop {
   position: fixed;

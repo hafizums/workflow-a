@@ -4,6 +4,8 @@ const state = {
   models: [],
   templates: [],
   selectedNodeId: null,
+  selectedEdgeId: null,
+  connectingEdge: null,
   workflowRunning: false,
   settingsOpen: false,
   templatesOpen: false,
@@ -15,6 +17,21 @@ const state = {
 
 const CARD_GAP_X = 330;
 const CARD_BRANCH_OFFSET_Y = 40;
+const MEDIA_INPUT_NAMES = ['image', 'reference_image', 'video', 'audio', 'last_image'];
+const FALLBACK_INPUT_HANDLES = {
+  image_to_image: ['image'],
+  upscale_image: ['image'],
+  remove_background: ['image'],
+  remove_object: ['image'],
+  image_to_video: ['image', 'last_image'],
+  start_end_to_video: ['image', 'last_image'],
+  speech_to_text: ['audio'],
+  lip_sync: ['image', 'audio'],
+  video_extend: ['video'],
+  video_effect: ['video'],
+  reference_to_image: ['reference_image'],
+  reference_to_video: ['reference_image'],
+};
 
 const LOCAL_FALLBACK_NODE_DEFS = [
   {
@@ -153,6 +170,9 @@ async function loadProject(projectId) {
   if (!state.project.nodes.some((node) => node.id === state.selectedNodeId)) {
     state.selectedNodeId = null;
   }
+  if (!edgeById(state.selectedEdgeId)) {
+    state.selectedEdgeId = null;
+  }
   localStorage.setItem('wavespeed_canvas_project_id', state.project.id);
   renderAll();
   log(`Loaded ${state.project.name}`);
@@ -168,6 +188,7 @@ async function createProject() {
     body: JSON.stringify({ name: 'WaveSpeed Canvas Workflow' }),
   });
   state.selectedNodeId = null;
+  state.selectedEdgeId = null;
   localStorage.setItem('wavespeed_canvas_project_id', state.project.id);
   await refreshProjectList();
   renderAll();
@@ -231,6 +252,7 @@ async function importProjectFile(event) {
     const result = await api('/api/projects/import', { method: 'POST', body });
     state.project = result.project;
     state.selectedNodeId = null;
+    state.selectedEdgeId = null;
     localStorage.setItem('wavespeed_canvas_project_id', state.project.id);
     await refreshProjectList();
     renderAll();
@@ -252,6 +274,7 @@ async function duplicateProject() {
     });
     state.project = result.project;
     state.selectedNodeId = null;
+    state.selectedEdgeId = null;
     localStorage.setItem('wavespeed_canvas_project_id', state.project.id);
     await refreshProjectList();
     renderAll();
@@ -360,6 +383,7 @@ async function createProjectFromTemplate(templateId) {
     });
     state.project = project;
     state.selectedNodeId = null;
+    state.selectedEdgeId = null;
     localStorage.setItem('wavespeed_canvas_project_id', state.project.id);
     await refreshProjectList();
     closeTemplatesPanel();
@@ -630,6 +654,75 @@ function outputKindFromNodeType(nodeType) {
   return 'other';
 }
 
+function sourceOutputKind(node) {
+  const model = nodeModel(node);
+  return model?.output_kind || outputKindFromNodeType(node.type) || 'other';
+}
+
+function inputHandlesForNode(node) {
+  const model = nodeModel(node);
+  const names = new Set();
+  (model?.fields || placeholderFields(node)).forEach((field) => {
+    if (isMediaInputField(field)) names.add(field.name);
+  });
+  (FALLBACK_INPUT_HANDLES[node.type] || []).forEach((name) => names.add(name));
+  return Array.from(names).map((name) => ({
+    name,
+    kind: targetInputKind(name),
+  }));
+}
+
+function isMediaInputField(field) {
+  return MEDIA_INPUT_NAMES.includes(field.name)
+    || field.type === 'asset_url'
+    || field.name.endsWith('_image');
+}
+
+function targetInputKind(inputName) {
+  if (['image', 'reference_image', 'last_image'].includes(inputName)) return 'image';
+  if (inputName === 'video') return 'video';
+  if (inputName === 'audio') return 'audio';
+  return 'unknown';
+}
+
+function edgeSource(edge) {
+  return edge.source_node_id || edge.source || edge.source_node || edge.sourceNodeId || edge.from_node || edge.from || '';
+}
+
+function edgeTarget(edge) {
+  return edge.target_node_id || edge.target || edge.target_node || edge.targetNodeId || edge.to || '';
+}
+
+function edgeSourceOutput(edge) {
+  return edge.source_output || edge.source_handle || 'output';
+}
+
+function edgeTargetInput(edge) {
+  const target = edge.target_input || edge.target_handle || 'input';
+  return target === 'input' ? defaultTargetInputForNode(edgeTarget(edge)) : target;
+}
+
+function defaultTargetInputForNode(nodeId) {
+  const node = state.project?.nodes?.find((item) => item.id === nodeId);
+  return inputHandlesForNode(node || {}).at(0)?.name || 'input';
+}
+
+function edgeById(edgeId) {
+  return (state.project?.edges || []).find((edge) => edge.id === edgeId) || null;
+}
+
+function selectedEdge() {
+  return edgeById(state.selectedEdgeId);
+}
+
+function incomingEdgeForInput(nodeId, inputName) {
+  return (state.project?.edges || []).find((edge) => edgeTarget(edge) === nodeId && edgeTargetInput(edge) === inputName) || null;
+}
+
+function edgeLabel(edge) {
+  return edgeTargetInput(edge) || 'input';
+}
+
 function outputKindFromUrl(url) {
   const clean = String(url || '').split('?')[0].toLowerCase();
   if (/\.(mp4|mov|webm)$/.test(clean)) return 'video';
@@ -784,6 +877,8 @@ function nodeCardHtml(node) {
   const isRunnable = !!model?.enabled && def.runnable !== false;
   const outputKind = model?.output_kind || def.output_kind || outputKindFromNodeType(node.type);
   return `
+    ${renderInputHandleRail(node)}
+    ${renderOutputHandle(node, outputKind)}
     <header class="node-card-header">
       <button type="button" class="node-drag-handle" data-drag-handle title="Move node">Move</button>
       <input class="node-title-input" data-field="title" value="${attr(node.title)}" />
@@ -812,6 +907,47 @@ function nodeCardHtml(node) {
   `;
 }
 
+function renderOutputHandle(node, outputKind) {
+  const kind = outputKind || sourceOutputKind(node);
+  return `
+    <button
+      type="button"
+      class="node-handle output-handle"
+      title="Connect ${attr(kind)} output"
+      data-output-handle
+      data-node-id="${attr(node.id)}"
+      data-output-name="output"
+      data-output-kind="${attr(kind)}"
+      aria-label="Connect output"
+    >
+      <span>${escapeHtml(kind)}</span>
+    </button>
+  `;
+}
+
+function renderInputHandleRail(node) {
+  const handles = inputHandlesForNode(node);
+  if (!handles.length) return '';
+  return `
+    <div class="input-handle-rail">
+      ${handles.map((handle) => `
+        <button
+          type="button"
+          class="node-handle input-handle"
+          title="Connect ${attr(handle.name)} input"
+          data-input-handle
+          data-node-id="${attr(node.id)}"
+          data-input-name="${attr(handle.name)}"
+          data-input-kind="${attr(handle.kind)}"
+          aria-label="Connect ${attr(handle.name)} input"
+        >
+          <span>${escapeHtml(handle.name)}</span>
+        </button>
+      `).join('')}
+    </div>
+  `;
+}
+
 function renderNodeFields(node) {
   const model = nodeModel(node);
   const fields = model?.fields || placeholderFields(node);
@@ -836,10 +972,12 @@ function placeholderFields(node) {
 function renderField(node, field) {
   const value = node.inputs?.[field.name] ?? field.default ?? '';
   const label = `${field.name}${field.required ? ' *' : ''}`;
+  const connectionBadge = renderConnectedInputBadge(node, field.name);
   if (field.name === 'image' || field.name.endsWith('_image') || field.type === 'asset_url') {
     return `
       <label>
         ${escapeHtml(label)}
+        ${connectionBadge}
         <select data-input="${attr(field.name)}">
           <option value="">Choose image asset</option>
           ${imageAssets().map((asset) => {
@@ -855,6 +993,7 @@ function renderField(node, field) {
       <label class="checkbox-field">
         <input data-input="${attr(field.name)}" type="checkbox" ${value ? 'checked' : ''} />
         ${escapeHtml(label)}
+        ${connectionBadge}
       </label>
     `;
   }
@@ -862,6 +1001,7 @@ function renderField(node, field) {
     return `
       <label>
         ${escapeHtml(label)}
+        ${connectionBadge}
         <select data-input="${attr(field.name)}">
           ${field.options.map((option) => {
             const optionValue = typeof option === 'object' ? option.value : option;
@@ -876,6 +1016,7 @@ function renderField(node, field) {
     return `
       <label>
         ${escapeHtml(label)}
+        ${connectionBadge}
         <textarea data-input="${attr(field.name)}" rows="4">${escapeHtml(value)}</textarea>
       </label>
     `;
@@ -883,8 +1024,21 @@ function renderField(node, field) {
   return `
     <label>
       ${escapeHtml(label)}
+      ${connectionBadge}
       <input data-input="${attr(field.name)}" type="${inputTypeForField(field)}" value="${attr(value)}" />
     </label>
+  `;
+}
+
+function renderConnectedInputBadge(node, inputName) {
+  const edge = incomingEdgeForInput(node.id, inputName);
+  if (!edge) return '';
+  const source = state.project?.nodes?.find((item) => item.id === edgeSource(edge));
+  return `
+    <span class="connected-input-badge">
+      ${escapeHtml(inputName)} &lt;- ${escapeHtml(source?.title || edgeSource(edge) || 'upstream')}
+      <button type="button" data-disconnect-edge="${attr(edge.id)}">Disconnect</button>
+    </span>
   `;
 }
 
@@ -980,6 +1134,17 @@ function wireNodeCard(card, node) {
   card.querySelector('[data-action="upload"]')?.addEventListener('click', () => uploadFromNode(card, node));
   card.querySelector('[data-action="branch"]')?.addEventListener('click', () => branchFromNode(node.id));
   card.querySelector('[data-action="branch-video"]')?.addEventListener('click', () => branchToVideoFromNode(node.id));
+  card.querySelector('[data-output-handle]')?.addEventListener('pointerdown', beginEdgeConnection);
+  card.querySelectorAll('[data-input-handle]').forEach((handle) => {
+    handle.addEventListener('pointerup', finishEdgeConnection);
+  });
+  card.querySelectorAll('[data-disconnect-edge]').forEach((button) => {
+    button.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      deleteEdge(button.dataset.disconnectEdge);
+    });
+  });
   card.querySelectorAll('[data-action="copy-url"]').forEach((button) => {
     button.addEventListener('click', () => copyText(button.dataset.url || ''));
   });
@@ -988,9 +1153,204 @@ function wireNodeCard(card, node) {
 
 function selectNode(nodeId) {
   state.selectedNodeId = nodeId;
+  state.selectedEdgeId = null;
   renderCanvas();
   renderWorkflowPanels();
   updateWorkflowButtons();
+}
+
+function selectEdge(edgeId) {
+  state.selectedEdgeId = edgeId;
+  state.selectedNodeId = null;
+  renderCanvas();
+  renderWorkflowPanels();
+  updateWorkflowButtons();
+}
+
+function beginEdgeConnection(event) {
+  if (!state.project) return;
+  event.preventDefault();
+  event.stopPropagation();
+  const handle = event.currentTarget;
+  const start = handleCenter(handle);
+  state.connectingEdge = {
+    source_node_id: handle.dataset.nodeId,
+    source_output: handle.dataset.outputName || 'output',
+    source_kind: handle.dataset.outputKind || 'unknown',
+    start_x: start.x,
+    start_y: start.y,
+    current_x: start.x,
+    current_y: start.y,
+  };
+  document.addEventListener('pointermove', moveEdgeConnection);
+  document.addEventListener('pointerup', finishEdgeConnection);
+  renderConnections();
+}
+
+function moveEdgeConnection(event) {
+  if (!state.connectingEdge) return;
+  const point = canvasPointFromClient(event.clientX, event.clientY);
+  state.connectingEdge.current_x = point.x;
+  state.connectingEdge.current_y = point.y;
+  renderConnections();
+}
+
+function finishEdgeConnection(event) {
+  if (!state.connectingEdge) return;
+  event.preventDefault();
+  event.stopPropagation();
+  const targetHandle = event.target?.closest?.('[data-input-handle]');
+  const connecting = state.connectingEdge;
+  clearConnectingEdge();
+  if (!targetHandle) {
+    renderConnections();
+    log('Connection cancelled.');
+    return;
+  }
+  createEdgeFromHandles({
+    sourceNodeId: connecting.source_node_id,
+    sourceOutput: connecting.source_output,
+    sourceKind: connecting.source_kind,
+    targetNodeId: targetHandle.dataset.nodeId,
+    targetInput: targetHandle.dataset.inputName,
+    targetKind: targetHandle.dataset.inputKind,
+  });
+}
+
+function clearConnectingEdge() {
+  state.connectingEdge = null;
+  document.removeEventListener('pointermove', moveEdgeConnection);
+  document.removeEventListener('pointerup', finishEdgeConnection);
+}
+
+function createEdgeFromHandles({
+  sourceNodeId,
+  sourceOutput = 'output',
+  sourceKind = '',
+  targetNodeId,
+  targetInput,
+  targetKind = '',
+}, options = {}) {
+  const validation = validateEdgeCandidate({
+    sourceNodeId,
+    sourceOutput,
+    sourceKind,
+    targetNodeId,
+    targetInput,
+    targetKind,
+  });
+  if (!validation.ok) {
+    log(validation.message);
+    return null;
+  }
+
+  const edge = {
+    id: `edge_${crypto.randomUUID().replaceAll('-', '').slice(0, 12)}`,
+    source_node_id: sourceNodeId,
+    target_node_id: targetNodeId,
+    source_handle: sourceOutput,
+    target_handle: targetInput,
+    source_output: sourceOutput,
+    target_input: targetInput,
+  };
+  state.project.edges = [...(state.project.edges || []), edge];
+  state.selectedEdgeId = edge.id;
+  state.selectedNodeId = null;
+  renderAll();
+  const suffix = validation.warning ? ` ${validation.warning}` : '';
+  if (options.log !== false) log(`Connected ${sourceNodeTitle(sourceNodeId)} -> ${targetNodeTitle(targetNodeId)} ${targetInput}.${suffix}`);
+  return edge;
+}
+
+function validateEdgeCandidate({ sourceNodeId, sourceOutput, sourceKind, targetNodeId, targetInput, targetKind }) {
+  const source = state.project?.nodes?.find((node) => node.id === sourceNodeId);
+  const target = state.project?.nodes?.find((node) => node.id === targetNodeId);
+  if (!source) return { ok: false, message: 'Cannot connect: source node is missing.' };
+  if (!target) return { ok: false, message: 'Cannot connect: target node is missing.' };
+  if (!targetInput) return { ok: false, message: 'Cannot connect: target input is missing.' };
+  if (sourceNodeId === targetNodeId) return { ok: false, message: 'Cannot connect a node to itself.' };
+
+  const duplicate = (state.project.edges || []).some((edge) => edgeSource(edge) === sourceNodeId
+    && edgeTarget(edge) === targetNodeId
+    && edgeSourceOutput(edge) === sourceOutput
+    && edgeTargetInput(edge) === targetInput);
+  if (duplicate) return { ok: false, message: 'That exact connection already exists.' };
+
+  if (wouldCreateCycle(sourceNodeId, targetNodeId)) {
+    return { ok: false, message: 'Cannot connect these nodes because it would create a workflow cycle.' };
+  }
+
+  const compatibility = mediaCompatibility(sourceKind || sourceOutputKind(source), targetKind || targetInputKind(targetInput));
+  if (!compatibility.ok) return compatibility;
+  return { ok: true, warning: compatibility.warning || '' };
+}
+
+function mediaCompatibility(sourceKind, targetKind) {
+  const source = sourceKind || 'unknown';
+  const target = targetKind || 'unknown';
+  const knownTargets = ['image', 'video', 'audio'];
+  const knownSources = ['image', 'video', 'audio'];
+  if (source === target) return { ok: true };
+  if (source === 'image' && ['reference_image', 'last_image'].includes(target)) return { ok: true };
+  if (source === 'image' && target === 'image') return { ok: true };
+  if ((source === 'unknown' || target === 'unknown')) {
+    return { ok: true, warning: 'Compatibility is unknown; workflow planning will validate the graph.' };
+  }
+  if (source === 'other' && knownTargets.includes(target)) {
+    return { ok: true, warning: 'Source output kind is generic; check the target input before running.' };
+  }
+  if (knownSources.includes(source) && knownTargets.includes(target) && source !== target) {
+    return { ok: false, message: `Cannot connect ${source} output to ${target} input.` };
+  }
+  return { ok: true, warning: 'Compatibility is unknown; workflow planning will validate the graph.' };
+}
+
+function wouldCreateCycle(sourceNodeId, targetNodeId) {
+  const adjacency = new Map();
+  (state.project?.nodes || []).forEach((node) => adjacency.set(node.id, []));
+  (state.project?.edges || []).forEach((edge) => {
+    const source = edgeSource(edge);
+    const target = edgeTarget(edge);
+    if (adjacency.has(source)) adjacency.get(source).push(target);
+  });
+  if (adjacency.has(sourceNodeId)) adjacency.get(sourceNodeId).push(targetNodeId);
+
+  const visiting = new Set();
+  const visited = new Set();
+  const visit = (nodeId) => {
+    if (visiting.has(nodeId)) return true;
+    if (visited.has(nodeId)) return false;
+    visiting.add(nodeId);
+    for (const nextId of adjacency.get(nodeId) || []) {
+      if (visit(nextId)) return true;
+    }
+    visiting.delete(nodeId);
+    visited.add(nodeId);
+    return false;
+  };
+  return Array.from(adjacency.keys()).some(visit);
+}
+
+function sourceNodeTitle(nodeId) {
+  return state.project?.nodes?.find((node) => node.id === nodeId)?.title || nodeId;
+}
+
+function targetNodeTitle(nodeId) {
+  return state.project?.nodes?.find((node) => node.id === nodeId)?.title || nodeId;
+}
+
+function handleCenter(element) {
+  const rect = element.getBoundingClientRect();
+  return canvasPointFromClient(rect.left + rect.width / 2, rect.top + rect.height / 2);
+}
+
+function canvasPointFromClient(clientX, clientY) {
+  const canvas = qs('#canvas');
+  const rect = canvas.getBoundingClientRect();
+  return {
+    x: clientX - rect.left,
+    y: clientY - rect.top,
+  };
 }
 
 function parseFieldValue(value, type, checked = false) {
@@ -1014,11 +1374,28 @@ async function copyText(value) {
 
 function deleteNode(nodeId) {
   state.project.nodes = state.project.nodes.filter((node) => node.id !== nodeId);
-  state.project.edges = (state.project.edges || []).filter((edge) => edge.source_node_id !== nodeId && edge.target_node_id !== nodeId);
+  state.project.edges = (state.project.edges || []).filter((edge) => edgeSource(edge) !== nodeId && edgeTarget(edge) !== nodeId);
   if (state.selectedNodeId === nodeId) {
     state.selectedNodeId = null;
   }
+  if (state.selectedEdgeId && !edgeById(state.selectedEdgeId)) {
+    state.selectedEdgeId = null;
+  }
   renderAll();
+}
+
+function deleteSelectedEdge() {
+  if (!state.selectedEdgeId) return log('No edge selected.');
+  deleteEdge(state.selectedEdgeId);
+}
+
+function deleteEdge(edgeId) {
+  if (!edgeId || !state.project) return;
+  const before = state.project.edges?.length || 0;
+  state.project.edges = (state.project.edges || []).filter((edge) => edge.id !== edgeId);
+  if (state.selectedEdgeId === edgeId) state.selectedEdgeId = null;
+  renderAll();
+  log(before === state.project.edges.length ? 'Edge not found.' : 'Edge deleted. Save project to persist it.');
 }
 
 function setupNodeDrag(card, node) {
@@ -1107,18 +1484,20 @@ function branchFromNode(sourceNodeId) {
     updated_at: now(),
   };
 
-  const edge = {
-    id: `edge_${crypto.randomUUID().replaceAll('-', '').slice(0, 12)}`,
-    source_node_id: sourceNode.id,
-    target_node_id: childNode.id,
-    source_handle: 'output',
-    target_handle: 'image',
-    target_input: 'image',
-  };
-
   state.project.nodes.push(childNode);
-  state.project.edges = [...(state.project.edges || []), edge];
-  renderAll();
+  const edge = createEdgeFromHandles({
+    sourceNodeId: sourceNode.id,
+    sourceOutput: 'output',
+    sourceKind: sourceOutputKind(sourceNode),
+    targetNodeId: childNode.id,
+    targetInput: 'image',
+    targetKind: 'image',
+  }, { log: false });
+  if (!edge) {
+    state.project.nodes = state.project.nodes.filter((node) => node.id !== childNode.id);
+    renderAll();
+    return;
+  }
   log('Created remix branch. Save project to persist it.');
 }
 
@@ -1152,18 +1531,20 @@ function branchToVideoFromNode(sourceNodeId) {
     updated_at: now(),
   };
 
-  const edge = {
-    id: `edge_${crypto.randomUUID().replaceAll('-', '').slice(0, 12)}`,
-    source_node_id: sourceNode.id,
-    target_node_id: childNode.id,
-    source_handle: 'output',
-    target_handle: 'image',
-    target_input: 'image',
-  };
-
   state.project.nodes.push(childNode);
-  state.project.edges = [...(state.project.edges || []), edge];
-  renderAll();
+  const edge = createEdgeFromHandles({
+    sourceNodeId: sourceNode.id,
+    sourceOutput: 'output',
+    sourceKind: sourceOutputKind(sourceNode),
+    targetNodeId: childNode.id,
+    targetInput: 'image',
+    targetKind: 'image',
+  }, { log: false });
+  if (!edge) {
+    state.project.nodes = state.project.nodes.filter((node) => node.id !== childNode.id);
+    renderAll();
+    return;
+  }
   log('Created image-to-video branch. Save project to persist it.');
 }
 
@@ -1197,22 +1578,82 @@ function renderConnections() {
   layer.innerHTML = connectionDefs();
 
   (state.project?.edges || []).forEach((edge) => {
-    const sourceCard = canvas.querySelector(`[data-node-id="${cssEscape(edge.source_node_id)}"]`);
-    const targetCard = canvas.querySelector(`[data-node-id="${cssEscape(edge.target_node_id)}"]`);
+    const sourceNodeId = edgeSource(edge);
+    const targetNodeId = edgeTarget(edge);
+    const targetInput = edgeTargetInput(edge);
+    const sourceCard = canvas.querySelector(`.canvas-node[data-node-id="${cssEscape(sourceNodeId)}"]`);
+    const targetCard = canvas.querySelector(`.canvas-node[data-node-id="${cssEscape(targetNodeId)}"]`);
     if (!sourceCard || !targetCard) return;
 
-    const startX = sourceCard.offsetLeft + sourceCard.offsetWidth;
-    const startY = sourceCard.offsetTop + sourceCard.offsetHeight / 2;
-    const endX = targetCard.offsetLeft;
-    const endY = targetCard.offsetTop + targetCard.offsetHeight / 2;
-    const curve = Math.max(70, Math.abs(endX - startX) * 0.45);
+    const outputHandle = sourceCard.querySelector('[data-output-handle]');
+    const inputHandle = targetCard.querySelector(`[data-input-handle][data-input-name="${cssEscape(targetInput)}"]`);
+    const start = outputHandle ? handleCenter(outputHandle) : {
+      x: sourceCard.offsetLeft + sourceCard.offsetWidth,
+      y: sourceCard.offsetTop + sourceCard.offsetHeight / 2,
+    };
+    const end = inputHandle ? handleCenter(inputHandle) : {
+      x: targetCard.offsetLeft,
+      y: targetCard.offsetTop + targetCard.offsetHeight / 2,
+    };
+    const pathData = connectionPath(start.x, start.y, end.x, end.y);
 
     const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-    path.setAttribute('class', 'connection-path');
-    path.setAttribute('d', `M ${startX} ${startY} C ${startX + curve} ${startY}, ${endX - curve} ${endY}, ${endX} ${endY}`);
+    path.setAttribute('class', `connection-path ${edge.id === state.selectedEdgeId ? 'selected' : ''}`);
+    path.setAttribute('d', pathData);
     path.setAttribute('marker-end', 'url(#arrowhead)');
+    path.dataset.edgeId = edge.id;
+    path.addEventListener('click', (event) => {
+      event.stopPropagation();
+      selectEdge(edge.id);
+    });
     layer.appendChild(path);
+
+    const labelX = (start.x + end.x) / 2;
+    const labelY = (start.y + end.y) / 2 - 8;
+    const labelGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    labelGroup.setAttribute('class', `connection-label ${edge.id === state.selectedEdgeId ? 'selected' : ''}`);
+    labelGroup.dataset.edgeId = edge.id;
+    labelGroup.addEventListener('click', (event) => {
+      event.stopPropagation();
+      selectEdge(edge.id);
+    });
+    const labelText = edgeLabel(edge);
+    const textWidth = Math.max(42, labelText.length * 7 + 18);
+    const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+    rect.setAttribute('x', labelX - textWidth / 2);
+    rect.setAttribute('y', labelY - 13);
+    rect.setAttribute('width', textWidth);
+    rect.setAttribute('height', 22);
+    rect.setAttribute('rx', 7);
+    const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    text.setAttribute('x', labelX);
+    text.setAttribute('y', labelY + 2);
+    text.setAttribute('text-anchor', 'middle');
+    text.textContent = labelText;
+    labelGroup.appendChild(rect);
+    labelGroup.appendChild(text);
+    layer.appendChild(labelGroup);
   });
+
+  if (state.connectingEdge) {
+    const ghost = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    ghost.setAttribute('class', 'connection-path ghost');
+    ghost.setAttribute(
+      'd',
+      connectionPath(
+        state.connectingEdge.start_x,
+        state.connectingEdge.start_y,
+        state.connectingEdge.current_x,
+        state.connectingEdge.current_y,
+      ),
+    );
+    layer.appendChild(ghost);
+  }
+}
+
+function connectionPath(startX, startY, endX, endY) {
+  const curve = Math.max(70, Math.abs(endX - startX) * 0.45);
+  return `M ${startX} ${startY} C ${startX + curve} ${startY}, ${endX - curve} ${endY}, ${endX} ${endY}`;
 }
 
 function cssEscape(value) {
@@ -1438,7 +1879,23 @@ function showSelectNodeError() {
 
 function renderWorkflowPanels() {
   const node = selectedNode();
+  const edge = selectedEdge();
   qs('#selectedNodeLabel').textContent = node ? `Selected: ${node.title}` : 'No node selected.';
+  const edgePanel = qs('#selectedEdgePanel');
+  const deleteButton = qs('#deleteSelectedEdgeBtn');
+  if (edge) {
+    edgePanel.className = 'edge-panel';
+    edgePanel.innerHTML = `
+      <strong>Selected edge</strong>
+      <span>${escapeHtml(sourceNodeTitle(edgeSource(edge)))} -> ${escapeHtml(targetNodeTitle(edgeTarget(edge)))}</span>
+      <small>Input: ${escapeHtml(edgeTargetInput(edge))}</small>
+    `;
+    deleteButton.disabled = false;
+  } else {
+    edgePanel.className = 'edge-panel muted';
+    edgePanel.textContent = 'No edge selected.';
+    deleteButton.disabled = true;
+  }
   renderRunHistory(state.project?.runs || []);
 }
 
@@ -1536,6 +1993,8 @@ function updateWorkflowButtons() {
     const element = qs(selector);
     if (element) element.disabled = !hasProject;
   });
+  const deleteEdgeButton = qs('#deleteSelectedEdgeBtn');
+  if (deleteEdgeButton) deleteEdgeButton.disabled = !hasProject || !state.selectedEdgeId;
 }
 
 function renderAssets() {
@@ -1664,5 +2123,19 @@ qs('#runSelectedBtn').addEventListener('click', runSelectedWorkflowNode);
 qs('#runFromSelectedBtn').addEventListener('click', runFromSelectedNode);
 qs('#runWholeGraphBtn').addEventListener('click', runWholeGraph);
 qs('#refreshRunsBtn').addEventListener('click', refreshRunHistory);
+qs('#deleteSelectedEdgeBtn').addEventListener('click', deleteSelectedEdge);
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && state.connectingEdge) {
+    clearConnectingEdge();
+    renderConnections();
+    log('Connection cancelled.');
+  }
+  if ((event.key === 'Delete' || event.key === 'Backspace') && state.selectedEdgeId) {
+    const target = event.target;
+    if (target && ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)) return;
+    event.preventDefault();
+    deleteSelectedEdge();
+  }
+});
 
 boot().catch((error) => log(error.message));

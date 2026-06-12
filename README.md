@@ -22,10 +22,10 @@ app/
   services/portable_project.py
   services/template_store.py
   services/wavespeed_adapter.py
-web/
+  web/
   index.html                 Vanilla canvas UI
   style.css                  Basic layout styling
-  app.js                     Vanilla front-end logic
+  app.js                     Vanilla front-end logic and connector editor
 requirements.txt             Python dependencies
 requirements.md              Product + technical requirements for Codex
 CODEX_TASKS.md               Step-by-step implementation tasks
@@ -113,6 +113,8 @@ The MVP supports:
 10. Exporting/importing portable project JSON.
 11. Duplicating projects locally.
 12. Creating projects from built-in or user-saved workflow templates.
+13. Manually wiring node outputs to media inputs with visual handles.
+14. Selecting and deleting workflow edges.
 
 ## Important implementation notes
 
@@ -156,15 +158,21 @@ curl -X POST http://localhost:8000/api/projects/PROJECT_ID/duplicate ^
 
 Exported JSON uses schema `wavespeed_canvas_project_export` version `1`. Exports strip local filesystem paths and mark localhost-only asset URLs as non-portable. Import creates a new project, remaps node/edge/asset IDs, resets runtime status, validates settings and edge references, and does not call WaveSpeed.
 
+## Visual connections
+
+Node cards show a primary output handle and media input handles such as `image`, `last_image`, `video`, and `audio`. Drag from an output handle to an input handle to create an edge. The app blocks self-loops, exact duplicate edges, obvious cycles, and known incompatible media kinds. Click an edge or label to select it, then use `Delete Selected Edge` or the Delete/Backspace key to remove it.
+
+Connected inputs show a badge with the upstream source node. Branch buttons remain available as shortcuts and create the same edge shape as manual wiring.
+
 ## What Codex should build next
 
 Use `requirements.md` as the product/technical spec and `CODEX_TASKS.md` as the implementation sequence.
 
 Good next local-product steps:
 
-1. Add a visual connector editor without React.
-2. Add local run progress and cancellation.
-3. Add asset cleanup/storage management.
+1. Add local run progress and cancellation.
+2. Add asset cleanup/storage management.
+3. Improve connector ergonomics with zoom/pan only if the vanilla canvas starts to feel cramped.
 4. Add more WaveSpeed categories only after request parameters are verified.
 5. Delay database/auth/billing/React until the local single-user workflow is stable.
 

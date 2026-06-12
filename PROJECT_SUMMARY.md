@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This project is a FastAPI plus vanilla HTML/CSS/JavaScript MVP for a lightweight AI canvas workflow app. It lets users build simple WaveSpeed media workflows with projects, draggable node cards, uploaded assets, generated outputs, branches, workflow runs, run history, project settings, model overrides, local cost guard controls, portable project JSON exports/imports, local project duplication, and reusable workflow templates.
+This project is a FastAPI plus vanilla HTML/CSS/JavaScript MVP for a lightweight AI canvas workflow app. It lets users build simple WaveSpeed media workflows with projects, draggable node cards, manual visual connections, uploaded assets, generated outputs, branches, workflow runs, run history, project settings, model overrides, local cost guard controls, portable project JSON exports/imports, local project duplication, and reusable workflow templates.
 
 The app is intentionally not a professional editor. It does not include layers, masks, brushes, vector tools, timelines, keyframes, React, React Flow, databases, auth, billing, or multi-user collaboration.
 
@@ -91,6 +91,10 @@ Cost values are local starting estimates only, not exact billing.
 - Disabled planned nodes show as coming soon and cannot be added.
 - Upload image assets locally and optionally upload to WaveSpeed.
 - Drag node cards and save positions.
+- Drag from output handles to media input handles to create manual workflow edges.
+- See ghost connector lines while wiring nodes.
+- Select SVG edges, see target-input labels, and delete selected edges.
+- See connected-input badges on node fields and disconnect individual inputs.
 - Edit node inputs through simple card forms.
 - Run single nodes with cost preflight.
 - Preview generated image/video/audio assets.
@@ -103,6 +107,12 @@ Cost values are local starting estimates only, not exact billing.
 - Import portable JSON project files as new local projects.
 - Duplicate the current project locally.
 - Open a Templates panel, create projects from built-in or user templates, save the current project as a local template, and delete user templates.
+
+## Visual Connector Editor
+
+V6 implements manual wiring without React or a graph library. Node cards expose one primary output handle and media input handles such as `image`, `last_image`, `video`, and `audio`. The frontend blocks self-loops, exact duplicate edges, obvious cycles, missing node references, and known incompatible media connections. New edges are saved in project JSON and are preserved by export/import, duplication, and templates.
+
+Branch buttons remain available as shortcuts and now use the same edge creation helper as manual wiring.
 
 ## Workflow Portability
 
@@ -138,7 +148,7 @@ Open:
 - No auth, billing, rate limits, or usage metering.
 - No background jobs, cancellation, retries, or progress streaming.
 - Cost guard is local estimate-based protection, not exact billing control.
-- Only first upstream output URL is used for workflow mapping.
-- Connector creation is branch-button based, not a full visual connector editor.
+- Only the first upstream output URL is used for workflow input mapping.
+- Visual connector editing is intentionally simple: no zoom/pan, minimap, multi-select, or advanced edge routing.
 - Live WaveSpeed runs require `WAVESPEED_API_KEY`, network access, and WaveSpeed availability.
 - V5 JSON portability does not bundle binary asset files; remote `wavespeed_url` values can remain useful, but local upload URLs may not travel across machines.
