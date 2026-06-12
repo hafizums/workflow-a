@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>WaveSpeed Canvas MVP</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <strong>WaveSpeed Canvas MVP</strong>
+      <span class="muted">Vanilla canvas workflow</span>
+    </div>
+    <div class="topbar-actions">
+      <select id="projectSelect" aria-label="Project"></select>
+      <button id="loadProjectBtn">Load</button>
+      <button id="newProjectBtn">New Project</button>
+      <button id="saveProjectBtn">Save Project</button>
+      <a href="/docs" target="_blank">API Docs</a>
+    </div>
+  </header>
+
+  <main class="layout">
+    <aside class="sidebar">
+      <h2>Nodes</h2>
+      <div id="nodeLibrary" class="node-library"></div>
+
+      <h2>Project Assets</h2>
+      <div id="assetList" class="asset-list"></div>
+    </aside>
+
+    <section class="canvas-wrap">
+      <div id="canvas" class="canvas">
+        <div class="canvas-help">Add nodes from the left. This phase keeps the canvas simple and saves node state to project JSON.</div>
+      </div>
+    </section>
+
+    <aside class="inspector">
+      <h2>Project</h2>
+      <label class="stack">
+        Name
+        <input id="projectName" />
+      </label>
+      <label class="stack">
+        Description
+        <textarea id="projectDescription" rows="4"></textarea>
+      </label>
+      <h2>Workflow</h2>
+      <div class="workflow-actions">
+        <button type="button" id="previewPlanBtn">Preview Plan</button>
+        <button type="button" id="runSelectedBtn">Run Selected</button>
+        <button type="button" id="runFromSelectedBtn">Run From Selected</button>
+        <button type="button" id="runWholeGraphBtn">Run Whole Graph</button>
+        <button type="button" id="refreshRunsBtn">Refresh Runs</button>
+      </div>
+      <div id="selectedNodeLabel" class="muted">No node selected.</div>
+      <h2>Workflow Plan</h2>
+      <div id="workflowPlan" class="workflow-panel muted">No plan preview yet.</div>
+      <h2>Workflow Messages</h2>
+      <div id="workflowMessages" class="workflow-panel muted">No workflow messages.</div>
+      <h2>Run History</h2>
+      <div id="runHistory" class="workflow-panel muted">No runs loaded.</div>
+      <h2>Activity</h2>
+      <pre id="outputLog"></pre>
+    </aside>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>
