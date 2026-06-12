@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This project is a FastAPI plus vanilla HTML/CSS/JavaScript MVP for a lightweight AI canvas workflow app. It lets users build simple WaveSpeed media workflows with projects, draggable node cards, uploaded assets, generated outputs, branches, workflow runs, run history, project settings, model overrides, and local cost guard controls.
+This project is a FastAPI plus vanilla HTML/CSS/JavaScript MVP for a lightweight AI canvas workflow app. It lets users build simple WaveSpeed media workflows with projects, draggable node cards, uploaded assets, generated outputs, branches, workflow runs, run history, project settings, model overrides, local cost guard controls, portable project JSON exports/imports, local project duplication, and reusable workflow templates.
 
 The app is intentionally not a professional editor. It does not include layers, masks, brushes, vector tools, timelines, keyframes, React, React Flow, databases, auth, billing, or multi-user collaboration.
 
@@ -11,6 +11,7 @@ The app is intentionally not a professional editor. It does not include layers, 
 - Backend: Python FastAPI in `app/`.
 - Frontend: static vanilla UI in `web/`, served from `/`.
 - Project storage: local JSON under `data/projects`.
+- Template storage: local JSON under `data/templates`, plus built-in templates in code.
 - Upload storage: local files under `data/uploads`, served from `/uploads`.
 - WaveSpeed SDK access: only through `app/services/wavespeed_adapter.py`.
 - Model execution: `app/services/node_runner.py`.
@@ -32,6 +33,9 @@ The app is intentionally not a professional editor. It does not include layers, 
 - `DELETE /api/projects/{project_id}`
 - `GET /api/projects/{project_id}/settings`
 - `PUT /api/projects/{project_id}/settings`
+- `GET /api/projects/{project_id}/export`
+- `POST /api/projects/import`
+- `POST /api/projects/{project_id}/duplicate`
 - `POST /api/assets/upload?upload_to_wavespeed=true|false`
 - `POST /api/runs/estimate`
 - `POST /api/runs/node`
@@ -40,6 +44,13 @@ The app is intentionally not a professional editor. It does not include layers, 
 - `POST /api/workflows/{project_id}/run-from-node/{node_id}`
 - `POST /api/workflows/{project_id}/run-all`
 - `GET /api/workflows/{project_id}/runs`
+- `GET /api/templates`
+- `POST /api/templates`
+- `GET /api/templates/{template_id}`
+- `PUT /api/templates/{template_id}`
+- `DELETE /api/templates/{template_id}`
+- `POST /api/templates/from-project/{project_id}`
+- `POST /api/templates/{template_id}/create-project`
 
 ## Enabled WaveSpeed Models
 
@@ -88,6 +99,22 @@ Cost values are local starting estimates only, not exact billing.
 - Run selected node, downstream graph, or whole graph.
 - Open Project Settings to edit cost guard and model overrides.
 - Node cards show effective model, output kind, estimated cost, and source.
+- Export portable JSON project files.
+- Import portable JSON project files as new local projects.
+- Duplicate the current project locally.
+- Open a Templates panel, create projects from built-in or user templates, save the current project as a local template, and delete user templates.
+
+## Workflow Portability
+
+V5 project exports use schema `wavespeed_canvas_project_export` version `1`. Export strips local filesystem paths and marks localhost-only asset URLs as non-portable. Import accepts either a full export envelope or raw project-shaped JSON, creates a new project ID, remaps node/edge/asset IDs, validates node types/settings/edge references, resets runtime status to `idle`, and never calls WaveSpeed.
+
+Built-in templates:
+
+- Basic Image Remix
+- Product Cleanup
+- Image to Short Video
+- UGC Starter
+- Voiceover Only
 
 ## Validation Commands
 
@@ -114,3 +141,4 @@ Open:
 - Only first upstream output URL is used for workflow mapping.
 - Connector creation is branch-button based, not a full visual connector editor.
 - Live WaveSpeed runs require `WAVESPEED_API_KEY`, network access, and WaveSpeed availability.
+- V5 JSON portability does not bundle binary asset files; remote `wavespeed_url` values can remain useful, but local upload URLs may not travel across machines.

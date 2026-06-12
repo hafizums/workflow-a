@@ -8,21 +8,29 @@
 </head>
 <body>
   <header class="topbar">
-    <div>
+    <div class="topbar-brand">
       <strong>WaveSpeed Canvas MVP</strong>
       <span class="muted">Vanilla canvas workflow</span>
     </div>
     <div class="topbar-actions">
+      <button id="toggleNodesBtn" class="panel-toggle" type="button" aria-pressed="false">Hide Nodes</button>
+      <button id="toggleInspectorBtn" class="panel-toggle" type="button" aria-pressed="false">Hide Inspector</button>
       <select id="projectSelect" aria-label="Project"></select>
       <button id="loadProjectBtn">Load</button>
       <button id="newProjectBtn">New Project</button>
       <button id="saveProjectBtn">Save Project</button>
+      <button id="exportProjectBtn">Export Project</button>
+      <button id="importProjectBtn">Import Project</button>
+      <button id="duplicateProjectBtn">Duplicate Project</button>
+      <button id="templatesBtn">Templates</button>
+      <button id="saveTemplateBtn">Save as Template</button>
       <button id="projectSettingsBtn">Project Settings</button>
+      <input id="importProjectFile" class="hidden" type="file" accept="application/json,.json" />
       <a href="/docs" target="_blank">API Docs</a>
     </div>
   </header>
 
-  <main class="layout">
+  <main id="appLayout" class="layout">
     <aside class="sidebar">
       <h2>Nodes</h2>
       <div id="nodeLibrary" class="node-library"></div>
@@ -114,6 +122,20 @@
       <button type="button" id="saveSettingsBtn">Save Settings</button>
       <button type="button" id="cancelSettingsBtn">Cancel</button>
     </footer>
+  </section>
+
+  <div id="templatesPanelBackdrop" class="settings-backdrop hidden"></div>
+  <section id="templatesPanel" class="settings-panel template-panel hidden" aria-label="Workflow templates">
+    <header class="settings-header">
+      <div>
+        <h2>Templates</h2>
+        <p class="muted">Start from reusable local workflows or save the current project as a template.</p>
+      </div>
+      <button type="button" id="closeTemplatesBtn">Close</button>
+    </header>
+    <div class="settings-content">
+      <div id="templateList" class="template-list"></div>
+    </div>
   </section>
 
   <script src="/app.js"></script>

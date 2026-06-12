@@ -12,8 +12,15 @@
 }
 
 * { box-sizing: border-box; }
+html {
+  height: 100%;
+}
 body {
   margin: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   font-family: Inter, Segoe UI, Arial, sans-serif;
   background: var(--bg);
   color: var(--text);
@@ -33,31 +40,79 @@ button:hover { border-color: var(--accent); }
 button:disabled { color: var(--muted); cursor: not-allowed; }
 a { color: var(--accent); text-decoration: none; }
 .topbar {
-  height: 58px;
+  flex: 0 0 auto;
+  min-height: 58px;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
-  padding: 0 18px;
+  gap: 14px;
+  padding: 10px 14px;
   border-bottom: 1px solid var(--line);
   background: var(--panel);
 }
+.topbar-brand {
+  flex: 0 0 250px;
+  min-width: 220px;
+  line-height: 1.35;
+}
+.topbar-brand strong,
+.topbar-brand span {
+  display: block;
+}
 .topbar-actions {
+  flex: 1;
   display: flex;
   align-items: center;
-  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.topbar-actions button,
+.topbar-actions a {
+  min-height: 36px;
+  padding: 7px 11px;
+  white-space: nowrap;
+}
+.topbar-actions select {
+  flex: 1 1 260px;
+  max-width: 520px;
+}
+.panel-toggle[aria-pressed="true"] {
+  border-color: rgba(85, 185, 141, .55);
+  color: #a9e3c8;
 }
 .layout {
+  flex: 1 1 auto;
+  min-height: 0;
   display: grid;
-  grid-template-columns: 300px 1fr 340px;
-  height: calc(100vh - 58px);
+  grid-template-columns: minmax(260px, 300px) minmax(0, 1fr) minmax(300px, 340px);
+  transition: grid-template-columns .18s ease;
+}
+.layout.left-collapsed {
+  grid-template-columns: 0 minmax(0, 1fr) minmax(300px, 340px);
+}
+.layout.right-collapsed {
+  grid-template-columns: minmax(260px, 300px) minmax(0, 1fr) 0;
+}
+.layout.left-collapsed.right-collapsed {
+  grid-template-columns: 0 minmax(0, 1fr) 0;
 }
 .sidebar, .inspector {
   background: var(--panel);
   border-right: 1px solid var(--line);
   padding: 16px;
   overflow: auto;
+  min-width: 0;
+  transition: padding .18s ease, border-color .18s ease, visibility .18s ease;
 }
 .inspector { border-left: 1px solid var(--line); border-right: 0; }
+.layout.left-collapsed .sidebar,
+.layout.right-collapsed .inspector {
+  padding: 0;
+  border-color: transparent;
+  overflow: hidden;
+  visibility: hidden;
+}
 h2 { font-size: 14px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 18px 0 10px; }
 .muted { color: var(--muted); font-size: 13px; }
 .stack { display: flex; flex-direction: column; gap: 8px; }
@@ -123,7 +178,11 @@ textarea { font-family: Consolas, ui-monospace, monospace; resize: vertical; }
   color: #c4b98d;
   border-color: rgba(214, 184, 92, .4);
 }
-.canvas-wrap { overflow: auto; position: relative; }
+.canvas-wrap {
+  min-width: 0;
+  overflow: auto;
+  position: relative;
+}
 .canvas {
   min-width: 1200px;
   min-height: 960px;
@@ -479,6 +538,42 @@ textarea { font-family: Consolas, ui-monospace, monospace; resize: vertical; }
   flex-direction: column;
   gap: 10px;
 }
+.template-panel {
+  width: min(680px, calc(100vw - 36px));
+}
+.template-list {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+}
+.template-card {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255,255,255,.02);
+  padding: 12px;
+}
+.template-card header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.template-card strong {
+  display: block;
+  font-size: 15px;
+}
+.template-card p {
+  margin: 5px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+.template-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
 .override-row {
   display: grid;
   grid-template-columns: minmax(150px, 1fr) minmax(190px, 1.25fr) auto;
@@ -577,9 +672,21 @@ pre {
 }
 
 @media (max-width: 980px) {
+  body {
+    overflow: auto;
+  }
   .layout {
     grid-template-columns: 1fr;
     height: auto;
+  }
+  .layout.left-collapsed,
+  .layout.right-collapsed,
+  .layout.left-collapsed.right-collapsed {
+    grid-template-columns: 1fr;
+  }
+  .layout.left-collapsed .sidebar,
+  .layout.right-collapsed .inspector {
+    display: none;
   }
   .sidebar, .inspector {
     border: 0;
@@ -589,11 +696,13 @@ pre {
     height: 760px;
   }
   .topbar {
-    height: auto;
     align-items: flex-start;
     gap: 12px;
     padding: 12px;
     flex-direction: column;
+  }
+  .topbar-brand {
+    flex-basis: auto;
   }
   .topbar-actions {
     width: 100%;

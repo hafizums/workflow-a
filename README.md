@@ -1,6 +1,6 @@
 # WaveSpeed Canvas MVP — FastAPI Codex Build Pack
 
-This is a **Codex-ready scaffold**, not a finished production app.
+This is a local MVP app, not a finished production app.
 
 Goal: build a lightweight node-canvas creative workflow app using Python FastAPI and WaveSpeed. It should feel like a simple "Weave-lite" workflow builder: generate, branch, remix, animate, and export AI media without professional editing tools.
 
@@ -15,14 +15,17 @@ app/
   routers/health.py          Health endpoint
   routers/models.py          Node category + model registry endpoints
   routers/projects.py        Project CRUD using local JSON files
+  routers/templates.py       Workflow template API
   routers/assets.py          Local upload + optional WaveSpeed upload
   routers/runs.py            Generic WaveSpeed node runner
   services/registry.py       Node categories and starter model specs
+  services/portable_project.py
+  services/template_store.py
   services/wavespeed_adapter.py
 web/
-  index.html                 Minimal canvas UI scaffold
+  index.html                 Vanilla canvas UI
   style.css                  Basic layout styling
-  app.js                     Minimal front-end logic
+  app.js                     Vanilla front-end logic
 requirements.txt             Python dependencies
 requirements.md              Product + technical requirements for Codex
 CODEX_TASKS.md               Step-by-step implementation tasks
@@ -80,6 +83,12 @@ List model registry:
 curl http://localhost:8000/api/models
 ```
 
+List workflow templates:
+
+```bat
+curl http://localhost:8000/api/templates
+```
+
 Run text-to-image from CMD:
 
 ```bat
@@ -90,42 +99,74 @@ curl -X POST http://localhost:8000/api/runs/node ^
 
 ## Current MVP behavior
 
-The scaffold already supports:
+The MVP supports:
 
 1. Creating local projects.
-2. Adding model nodes to a simple canvas.
-3. Editing a selected node's JSON inputs.
+2. Adding draggable model nodes to a simple canvas.
+3. Editing node inputs with simple card controls.
 4. Running enabled WaveSpeed model nodes.
 5. Uploading files locally.
 6. Optionally uploading local files to WaveSpeed so image/video models can consume them.
 7. Saving project JSON under `data/projects`.
+8. Running selected/downstream/whole-graph workflows.
+9. Using project settings, model overrides, and local cost guard controls.
+10. Exporting/importing portable project JSON.
+11. Duplicating projects locally.
+12. Creating projects from built-in or user-saved workflow templates.
 
 ## Important implementation notes
 
 Localhost file URLs are usually not reachable by remote AI APIs. For image-to-image or image-to-video nodes, use the upload endpoint with `upload_to_wavespeed=true`, then copy the returned `wavespeed_url` into the node input field.
 
-The only enabled model IDs in the initial registry are:
+Enabled model IDs include:
 
 ```text
 wavespeed-ai/z-image/turbo
 wavespeed-ai/z-image-turbo/image-to-image
+wavespeed-ai/image-upscaler
+wavespeed-ai/image-background-remover
+wavespeed-ai/wan-2.2/i2v-480p-ultra-fast
+wavespeed-ai/qwen3-tts/text-to-speech
 ```
 
-Other categories are represented as disabled placeholders. Check the WaveSpeed model page and replace the placeholder IDs before enabling those models.
+Other categories are represented as disabled or planned catalog entries until their request parameters and UX are verified.
+
+## Portability
+
+Project export:
+
+```bat
+curl http://localhost:8000/api/projects/PROJECT_ID/export
+```
+
+Project import:
+
+```bat
+curl -X POST http://localhost:8000/api/projects/import ^
+  -F "file=@workflow.json"
+```
+
+Project duplication:
+
+```bat
+curl -X POST http://localhost:8000/api/projects/PROJECT_ID/duplicate ^
+  -H "Content-Type: application/json" ^
+  -d "{\"name\":\"Copy of workflow\",\"include_outputs\":true,\"include_run_history\":false}"
+```
+
+Exported JSON uses schema `wavespeed_canvas_project_export` version `1`. Exports strip local filesystem paths and mark localhost-only asset URLs as non-portable. Import creates a new project, remaps node/edge/asset IDs, resets runtime status, validates settings and edge references, and does not call WaveSpeed.
 
 ## What Codex should build next
 
 Use `requirements.md` as the product/technical spec and `CODEX_TASKS.md` as the implementation sequence.
 
-Main next steps:
+Good next local-product steps:
 
-1. Replace the basic DOM canvas with React Flow or another node graph library.
-2. Add real node linking and automatic input mapping.
-3. Add model-specific forms instead of raw JSON.
-4. Add SQLite/Postgres persistence.
-5. Add run history and asset previews.
-6. Add image-to-video, start-end-video, text-to-speech, and lip-sync models after verifying model IDs.
-7. Add auth and billing controls before public launch.
+1. Add a visual connector editor without React.
+2. Add local run progress and cancellation.
+3. Add asset cleanup/storage management.
+4. Add more WaveSpeed categories only after request parameters are verified.
+5. Delay database/auth/billing/React until the local single-user workflow is stable.
 
 ## Out of scope for MVP
 

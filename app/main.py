@@ -8,7 +8,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.core.config import get_settings
-from app.routers import assets, health, model_catalog, models, projects, runs, workflows
+from app.routers import assets, health, model_catalog, models, projects, runs, templates, workflows
 
 settings = get_settings()
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -35,6 +35,7 @@ app.include_router(projects.router)
 app.include_router(assets.router)
 app.include_router(runs.router)
 app.include_router(workflows.router)
+app.include_router(templates.router)
 
 
 @app.exception_handler(RequestValidationError)

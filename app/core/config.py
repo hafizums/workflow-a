@@ -18,7 +18,9 @@ class Settings(BaseSettings):
     data_dir: Path = Path("data")
     upload_dir: Path = Path("data/uploads")
     project_dir: Path = Path("data/projects")
+    template_dir: Path = Path("data/templates")
     max_upload_mb: int = 50
+    max_import_json_mb: int = 2
 
     @property
     def cors_origin_list(self) -> List[str]:
@@ -28,6 +30,7 @@ class Settings(BaseSettings):
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.upload_dir.mkdir(parents=True, exist_ok=True)
         self.project_dir.mkdir(parents=True, exist_ok=True)
+        self.template_dir.mkdir(parents=True, exist_ok=True)
 
 
 @lru_cache

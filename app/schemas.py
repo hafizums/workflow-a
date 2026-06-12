@@ -218,6 +218,91 @@ class ProjectUpdate(BaseModel):
     settings: Optional[ProjectSettings] = None
 
 
+class ProjectExportEnvelope(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    schema_name: str = Field(
+        default="wavespeed_canvas_project_export",
+        validation_alias="schema",
+        serialization_alias="schema",
+    )
+    version: int = 1
+    exported_at: datetime = Field(default_factory=utc_now)
+    app: str = "WaveSpeed Canvas MVP"
+    project: Project
+    warnings: List[str] = Field(default_factory=list)
+
+
+class ProjectImportRequest(BaseModel):
+    import_data: Dict[str, Any]
+    mode: str = "copy"
+    name: str | None = None
+    include_outputs: bool = True
+    include_run_history: bool = False
+
+
+class ProjectDuplicateRequest(BaseModel):
+    name: str | None = None
+    include_outputs: bool = True
+    include_run_history: bool = False
+
+
+class ProjectImportResponse(BaseModel):
+    ok: bool = True
+    project: Project
+    warnings: List[str] = Field(default_factory=list)
+    id_map: Dict[str, Dict[str, str]] = Field(default_factory=dict)
+
+
+class WorkflowTemplate(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("template"))
+    name: str
+    description: str = ""
+    category: str = "image"
+    tags: List[str] = Field(default_factory=list)
+    version: int = 1
+    builtin: bool = False
+    nodes: List[CanvasNode] = Field(default_factory=list)
+    edges: List[CanvasEdge] = Field(default_factory=list)
+    settings: ProjectSettings = Field(default_factory=ProjectSettings)
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+
+
+class WorkflowTemplateCreate(BaseModel):
+    name: str
+    description: str = ""
+    category: str = "image"
+    tags: List[str] = Field(default_factory=list)
+    nodes: List[CanvasNode] = Field(default_factory=list)
+    edges: List[CanvasEdge] = Field(default_factory=list)
+    settings: ProjectSettings = Field(default_factory=ProjectSettings)
+
+
+class WorkflowTemplateUpdate(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    category: str | None = None
+    tags: List[str] | None = None
+    nodes: List[CanvasNode] | None = None
+    edges: List[CanvasEdge] | None = None
+    settings: ProjectSettings | None = None
+
+
+class TemplateFromProjectRequest(BaseModel):
+    name: str
+    description: str = ""
+    category: str = "image"
+    tags: List[str] = Field(default_factory=list)
+    include_outputs: bool = False
+    include_settings: bool = True
+
+
+class CreateProjectFromTemplateRequest(BaseModel):
+    name: str | None = None
+    description: str = ""
+
+
 class ModelField(BaseModel):
     name: str
     type: str

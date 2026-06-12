@@ -2,9 +2,15 @@ const state = {
   project: null,
   projects: [],
   models: [],
+  templates: [],
   selectedNodeId: null,
   workflowRunning: false,
   settingsOpen: false,
+  templatesOpen: false,
+  ui: {
+    leftPanelCollapsed: false,
+    rightPanelCollapsed: false,
+  },
 };
 
 const CARD_GAP_X = 330;
@@ -186,6 +192,80 @@ async function saveProject() {
   log('Project saved.');
 }
 
+async function exportProject() {
+  if (!state.project) return log('Create or load a project first.');
+  await persistProjectSilently();
+  const response = await fetch(`/api/projects/${state.project.id}/export`);
+  if (!response.ok) {
+    return log(await response.text());
+  }
+  const blob = await response.blob();
+  const disposition = response.headers.get('content-disposition') || '';
+  const filename = disposition.match(/filename="?([^"]+)"?/i)?.[1] || `wavespeed-workflow-${state.project.id}.json`;
+  downloadBlob(blob, filename);
+  log(`Exported ${state.project.name}.`);
+}
+
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+function openImportPicker() {
+  qs('#importProjectFile').value = '';
+  qs('#importProjectFile').click();
+}
+
+async function importProjectFile(event) {
+  const file = event.target.files?.[0];
+  if (!file) return;
+  const body = new FormData();
+  body.append('file', file);
+  try {
+    const result = await api('/api/projects/import', { method: 'POST', body });
+    state.project = result.project;
+    state.selectedNodeId = null;
+    localStorage.setItem('wavespeed_canvas_project_id', state.project.id);
+    await refreshProjectList();
+    renderAll();
+    logImportResult('Imported project.', result);
+  } catch (error) {
+    log(error.message);
+  }
+}
+
+async function duplicateProject() {
+  if (!state.project) return log('Create or load a project first.');
+  await persistProjectSilently();
+  const name = window.prompt('Duplicate project name', `Copy of ${state.project.name || 'Workflow'}`);
+  if (name === null) return;
+  try {
+    const result = await api(`/api/projects/${state.project.id}/duplicate`, {
+      method: 'POST',
+      body: JSON.stringify({ name: name || undefined, include_outputs: true, include_run_history: false }),
+    });
+    state.project = result.project;
+    state.selectedNodeId = null;
+    localStorage.setItem('wavespeed_canvas_project_id', state.project.id);
+    await refreshProjectList();
+    renderAll();
+    logImportResult('Duplicated project.', result);
+  } catch (error) {
+    log(error.message);
+  }
+}
+
+function logImportResult(prefix, result) {
+  const warnings = result.warnings?.length ? `\nWarnings:\n${result.warnings.map((item) => `- ${item}`).join('\n')}` : '';
+  log(`${prefix} ${result.project?.name || ''}${warnings}`);
+}
+
 async function fetchProjectSettings() {
   if (!state.project) return null;
   const settings = await api(`/api/projects/${state.project.id}/settings`);
@@ -207,6 +287,127 @@ async function openProjectSettings() {
 function closeProjectSettings() {
   state.settingsOpen = false;
   renderSettingsPanel();
+}
+
+async function openTemplatesPanel() {
+  state.templatesOpen = true;
+  try {
+    await loadTemplates();
+  } catch (error) {
+    log(error.message);
+  }
+  renderTemplatesPanel();
+}
+
+function closeTemplatesPanel() {
+  state.templatesOpen = false;
+  renderTemplatesPanel();
+}
+
+async function loadTemplates() {
+  state.templates = await api('/api/templates');
+}
+
+function renderTemplatesPanel() {
+  const panel = qs('#templatesPanel');
+  const backdrop = qs('#templatesPanelBackdrop');
+  panel.classList.toggle('hidden', !state.templatesOpen);
+  backdrop.classList.toggle('hidden', !state.templatesOpen);
+  if (!state.templatesOpen) return;
+
+  const list = qs('#templateList');
+  if (!state.templates.length) {
+    list.innerHTML = '<div class="muted">No templates found.</div>';
+    return;
+  }
+  list.innerHTML = state.templates.map((template) => `
+    <article class="template-card">
+      <header>
+        <div>
+          <strong>${escapeHtml(template.name)}</strong>
+          <p>${escapeHtml(template.description || '')}</p>
+        </div>
+        <span class="badge ${template.builtin ? 'ok' : ''}">${template.builtin ? 'built-in' : 'user'}</span>
+      </header>
+      <div class="badge-row">
+        <span class="badge">${escapeHtml(template.category || 'workflow')}</span>
+        <span class="badge">${Number(template.nodes?.length || 0)} nodes</span>
+        ${(template.tags || []).slice(0, 4).map((tag) => `<span class="badge">${escapeHtml(tag)}</span>`).join('')}
+      </div>
+      <div class="template-actions">
+        <button type="button" data-template-create="${attr(template.id)}">Create Project</button>
+        ${template.builtin ? '' : `<button type="button" data-template-delete="${attr(template.id)}">Delete</button>`}
+      </div>
+    </article>
+  `).join('');
+
+  list.querySelectorAll('[data-template-create]').forEach((button) => {
+    button.addEventListener('click', () => createProjectFromTemplate(button.dataset.templateCreate));
+  });
+  list.querySelectorAll('[data-template-delete]').forEach((button) => {
+    button.addEventListener('click', () => deleteUserTemplate(button.dataset.templateDelete));
+  });
+}
+
+async function createProjectFromTemplate(templateId) {
+  const template = state.templates.find((item) => item.id === templateId);
+  const name = window.prompt('New project name', template ? `${template.name} Project` : 'New Workflow');
+  if (name === null) return;
+  try {
+    const project = await api(`/api/templates/${templateId}/create-project`, {
+      method: 'POST',
+      body: JSON.stringify({ name: name || undefined }),
+    });
+    state.project = project;
+    state.selectedNodeId = null;
+    localStorage.setItem('wavespeed_canvas_project_id', state.project.id);
+    await refreshProjectList();
+    closeTemplatesPanel();
+    renderAll();
+    log(`Created project from template: ${state.project.name}`);
+  } catch (error) {
+    log(error.message);
+  }
+}
+
+async function deleteUserTemplate(templateId) {
+  if (!window.confirm('Delete this local template?')) return;
+  try {
+    await api(`/api/templates/${templateId}`, { method: 'DELETE' });
+    await loadTemplates();
+    renderTemplatesPanel();
+    log('Template deleted.');
+  } catch (error) {
+    log(error.message);
+  }
+}
+
+async function saveCurrentProjectAsTemplate() {
+  if (!state.project) return log('Create or load a project first.');
+  await persistProjectSilently();
+  const name = window.prompt('Template name', `${state.project.name || 'Workflow'} Template`);
+  if (name === null || !name.trim()) return;
+  const description = window.prompt('Template description', state.project.description || '') || '';
+  const category = window.prompt('Template category', 'image') || 'image';
+  const tagText = window.prompt('Tags, comma separated', 'starter') || '';
+  try {
+    const template = await api(`/api/templates/from-project/${state.project.id}`, {
+      method: 'POST',
+      body: JSON.stringify({
+        name: name.trim(),
+        description,
+        category,
+        tags: tagText.split(',').map((tag) => tag.trim()).filter(Boolean),
+        include_outputs: false,
+        include_settings: true,
+      }),
+    });
+    await loadTemplates();
+    renderTemplatesPanel();
+    log(`Saved template: ${template.name}`);
+  } catch (error) {
+    log(error.message);
+  }
 }
 
 function projectSettings() {
@@ -493,12 +694,61 @@ function addNode(def) {
 }
 
 function renderAll() {
+  renderLayoutState();
   renderProjectPanel();
   renderCanvas();
   renderAssets();
   renderWorkflowPanels();
   renderSettingsPanel();
+  renderTemplatesPanel();
   updateWorkflowButtons();
+}
+
+function loadLayoutPreference() {
+  try {
+    const saved = JSON.parse(localStorage.getItem('wavespeed_canvas_layout') || '{}');
+    state.ui.leftPanelCollapsed = !!saved.leftPanelCollapsed;
+    state.ui.rightPanelCollapsed = !!saved.rightPanelCollapsed;
+  } catch {
+    state.ui.leftPanelCollapsed = false;
+    state.ui.rightPanelCollapsed = false;
+  }
+}
+
+function saveLayoutPreference() {
+  localStorage.setItem('wavespeed_canvas_layout', JSON.stringify(state.ui));
+}
+
+function renderLayoutState() {
+  const layout = qs('#appLayout');
+  if (!layout) return;
+  layout.classList.toggle('left-collapsed', state.ui.leftPanelCollapsed);
+  layout.classList.toggle('right-collapsed', state.ui.rightPanelCollapsed);
+
+  const nodesBtn = qs('#toggleNodesBtn');
+  const inspectorBtn = qs('#toggleInspectorBtn');
+  if (nodesBtn) {
+    nodesBtn.textContent = state.ui.leftPanelCollapsed ? 'Show Nodes' : 'Hide Nodes';
+    nodesBtn.setAttribute('aria-pressed', String(state.ui.leftPanelCollapsed));
+  }
+  if (inspectorBtn) {
+    inspectorBtn.textContent = state.ui.rightPanelCollapsed ? 'Show Inspector' : 'Hide Inspector';
+    inspectorBtn.setAttribute('aria-pressed', String(state.ui.rightPanelCollapsed));
+  }
+}
+
+function toggleLeftPanel() {
+  state.ui.leftPanelCollapsed = !state.ui.leftPanelCollapsed;
+  saveLayoutPreference();
+  renderLayoutState();
+  window.requestAnimationFrame(renderConnections);
+}
+
+function toggleRightPanel() {
+  state.ui.rightPanelCollapsed = !state.ui.rightPanelCollapsed;
+  saveLayoutPreference();
+  renderLayoutState();
+  window.requestAnimationFrame(renderConnections);
 }
 
 function renderProjectPanel() {
@@ -1282,6 +1532,10 @@ function updateWorkflowButtons() {
   ['#runSelectedBtn', '#runFromSelectedBtn'].forEach((selector) => {
     qs(selector).disabled = !hasProject || state.workflowRunning;
   });
+  ['#saveProjectBtn', '#exportProjectBtn', '#duplicateProjectBtn', '#saveTemplateBtn', '#projectSettingsBtn'].forEach((selector) => {
+    const element = qs(selector);
+    if (element) element.disabled = !hasProject;
+  });
 }
 
 function renderAssets() {
@@ -1369,6 +1623,8 @@ function attr(value) {
 }
 
 async function boot() {
+  loadLayoutPreference();
+  renderLayoutState();
   await loadModels();
   renderNodeLibrary();
   await refreshProjectList();
@@ -1384,12 +1640,22 @@ async function boot() {
 }
 
 qs('#newProjectBtn').addEventListener('click', createProject);
+qs('#toggleNodesBtn').addEventListener('click', toggleLeftPanel);
+qs('#toggleInspectorBtn').addEventListener('click', toggleRightPanel);
 qs('#saveProjectBtn').addEventListener('click', saveProject);
+qs('#exportProjectBtn').addEventListener('click', exportProject);
+qs('#importProjectBtn').addEventListener('click', openImportPicker);
+qs('#importProjectFile').addEventListener('change', importProjectFile);
+qs('#duplicateProjectBtn').addEventListener('click', duplicateProject);
+qs('#templatesBtn').addEventListener('click', openTemplatesPanel);
+qs('#saveTemplateBtn').addEventListener('click', saveCurrentProjectAsTemplate);
 qs('#loadProjectBtn').addEventListener('click', loadSelectedProject);
 qs('#projectSettingsBtn').addEventListener('click', openProjectSettings);
 qs('#closeSettingsBtn').addEventListener('click', closeProjectSettings);
 qs('#cancelSettingsBtn').addEventListener('click', closeProjectSettings);
 qs('#settingsPanelBackdrop').addEventListener('click', closeProjectSettings);
+qs('#closeTemplatesBtn').addEventListener('click', closeTemplatesPanel);
+qs('#templatesPanelBackdrop').addEventListener('click', closeTemplatesPanel);
 qs('#saveSettingsBtn').addEventListener('click', saveProjectSettings);
 qs('#projectName').addEventListener('input', updateProjectFieldsFromForm);
 qs('#projectDescription').addEventListener('input', updateProjectFieldsFromForm);
