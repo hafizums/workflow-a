@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This project is a FastAPI plus vanilla HTML/CSS/JavaScript MVP for a lightweight AI canvas workflow app. It lets users build simple WaveSpeed media workflows with projects, draggable node cards, manual visual connections, uploaded assets, generated outputs, branches, workflow runs, run history, project settings, model overrides, local cost guard controls, portable project JSON exports/imports, local project duplication, and reusable workflow templates.
+This project is a FastAPI plus vanilla HTML/CSS/JavaScript MVP for a lightweight AI canvas workflow app. It lets users build simple WaveSpeed media workflows with projects, draggable node cards, manual visual connections, uploaded assets, generated outputs, branches, queued local runs, run history, project settings, model overrides, local cost guard controls, portable project JSON exports/imports, local project duplication, and reusable workflow templates.
 
 The app is intentionally not a professional editor. It does not include layers, masks, brushes, vector tools, timelines, keyframes, React, React Flow, databases, auth, billing, or multi-user collaboration.
 
@@ -17,6 +17,7 @@ The app is intentionally not a professional editor. It does not include layers, 
 - Model execution: `app/services/node_runner.py`.
 - Model catalog/registry: `app/services/model_catalog.py` and `app/services/registry.py`.
 - Workflow planning/execution: `app/services/workflow_resolver.py` and `app/routers/workflows.py`.
+- Local run management: in-memory queue in `app/services/run_manager.py`, exposed by `app/routers/jobs.py`.
 
 ## Main Backend Endpoints
 
@@ -44,6 +45,15 @@ The app is intentionally not a professional editor. It does not include layers, 
 - `POST /api/workflows/{project_id}/run-from-node/{node_id}`
 - `POST /api/workflows/{project_id}/run-all`
 - `GET /api/workflows/{project_id}/runs`
+- `GET /api/jobs`
+- `GET /api/jobs/{job_id}`
+- `POST /api/jobs/{job_id}/cancel`
+- `POST /api/jobs/{job_id}/retry`
+- `DELETE /api/jobs/completed`
+- `POST /api/jobs/node`
+- `POST /api/jobs/workflow/selected`
+- `POST /api/jobs/workflow/from-node/{node_id}`
+- `POST /api/jobs/workflow/all`
 - `GET /api/templates`
 - `POST /api/templates`
 - `GET /api/templates/{template_id}`
@@ -97,10 +107,12 @@ Cost values are local starting estimates only, not exact billing.
 - See connected-input badges on node fields and disconnect individual inputs.
 - Edit node inputs through simple card forms.
 - Run single nodes with cost preflight.
+- Queue single-node runs through the Run Manager.
 - Preview generated image/video/audio assets.
 - Branch image outputs into remix or image-to-video nodes.
 - Preview workflow plans with total estimated cost.
-- Run selected node, downstream graph, or whole graph.
+- Queue selected-node, downstream, or whole-graph workflow runs.
+- Poll queued/running jobs, cancel queued jobs, request best-effort cancellation for running jobs, and retry failed/cancelled jobs.
 - Open Project Settings to edit cost guard and model overrides.
 - Node cards show effective model, output kind, estimated cost, and source.
 - Export portable JSON project files.
@@ -113,6 +125,14 @@ Cost values are local starting estimates only, not exact billing.
 V6 implements manual wiring without React or a graph library. Node cards expose one primary output handle and media input handles such as `image`, `last_image`, `video`, and `audio`. The frontend blocks self-loops, exact duplicate edges, obvious cycles, missing node references, and known incompatible media connections. New edges are saved in project JSON and are preserved by export/import, duplication, and templates.
 
 Branch buttons remain available as shortcuts and now use the same edge creation helper as manual wiring.
+
+## Local Run Manager
+
+V7 implements a local in-process Run Manager without Redis, Celery, a database, WebSockets, or SSE. The app stores active jobs in memory, runs one job at a time by default, and exposes job list/get/cancel/retry/clear endpoints under `/api/jobs`.
+
+Single-node and workflow run buttons now queue jobs. The frontend shows a Run Manager panel with job id, kind, project, status, current node, real step-count progress, timestamps, and error/warning messages. It polls only while jobs are active or after refresh. Queued jobs cancel immediately. Running jobs can be marked `cancel_requested`; active WaveSpeed SDK calls are best-effort only and may finish before the job stops. Workflow jobs stop between steps after cancellation is requested.
+
+Terminal jobs are written into project `runs` history with `job_id`, status, node ids, asset ids, output URLs, warnings, errors, and progress counts. Project run history is capped to the latest 100 entries. In-memory jobs are lost on server restart, while persisted project run history remains in project JSON.
 
 ## Workflow Portability
 
@@ -146,7 +166,9 @@ Open:
 
 - Local JSON storage only; not safe for production multi-user concurrency.
 - No auth, billing, rate limits, or usage metering.
-- No background jobs, cancellation, retries, or progress streaming.
+- Local run jobs are in-memory only and disappear on server restart; persisted project run history remains.
+- Active WaveSpeed SDK calls cannot be force-killed by the local cancel button; running cancellation is best-effort and checked between workflow steps.
+- No production queue, database-backed jobs, WebSockets, SSE, Redis, Celery, or real progress streaming.
 - Cost guard is local estimate-based protection, not exact billing control.
 - Only the first upstream output URL is used for workflow input mapping.
 - Visual connector editing is intentionally simple: no zoom/pan, minimap, multi-select, or advanced edge routing.

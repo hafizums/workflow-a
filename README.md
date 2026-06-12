@@ -16,9 +16,11 @@ app/
   routers/models.py          Node category + model registry endpoints
   routers/projects.py        Project CRUD using local JSON files
   routers/templates.py       Workflow template API
+  routers/jobs.py            Local in-memory run manager API
   routers/assets.py          Local upload + optional WaveSpeed upload
   routers/runs.py            Generic WaveSpeed node runner
   services/registry.py       Node categories and starter model specs
+  services/run_manager.py    Local queue, retry, cancel, and run history bridge
   services/portable_project.py
   services/template_store.py
   services/wavespeed_adapter.py
@@ -89,6 +91,12 @@ List workflow templates:
 curl http://localhost:8000/api/templates
 ```
 
+List local run-manager jobs:
+
+```bat
+curl http://localhost:8000/api/jobs
+```
+
 Run text-to-image from CMD:
 
 ```bat
@@ -115,6 +123,8 @@ The MVP supports:
 12. Creating projects from built-in or user-saved workflow templates.
 13. Manually wiring node outputs to media inputs with visual handles.
 14. Selecting and deleting workflow edges.
+15. Queueing single-node and workflow runs through the local Run Manager.
+16. Cancelling queued jobs, requesting best-effort cancellation for running jobs, and retrying failed/cancelled jobs.
 
 ## Important implementation notes
 
@@ -164,17 +174,36 @@ Node cards show a primary output handle and media input handles such as `image`,
 
 Connected inputs show a badge with the upstream source node. Branch buttons remain available as shortcuts and create the same edge shape as manual wiring.
 
+## Local Run Manager
+
+V7 adds a local in-process Run Manager. The normal node `Run` button and workflow run buttons queue jobs instead of blocking on the request. Jobs are kept in memory and exposed through:
+
+```text
+GET    /api/jobs
+GET    /api/jobs/{job_id}
+POST   /api/jobs/{job_id}/cancel
+POST   /api/jobs/{job_id}/retry
+DELETE /api/jobs/completed
+POST   /api/jobs/node
+POST   /api/jobs/workflow/selected
+POST   /api/jobs/workflow/from-node/{node_id}
+POST   /api/jobs/workflow/all
+```
+
+The frontend polls `/api/jobs` while work is active and shows queued/running/success/error/cancelled jobs in the Run Manager panel. Progress is real step count progress, not model-progress percentages. Queued jobs cancel immediately. Running jobs can be marked `cancel_requested`; an active WaveSpeed SDK call may still finish before the job stops. Workflow jobs check for cancellation between steps.
+
+Completed terminal jobs are written into the project `runs` history and capped to the latest 100 entries. In-memory jobs disappear when the server restarts, but persisted completed run history remains in the project JSON.
+
 ## What Codex should build next
 
 Use `requirements.md` as the product/technical spec and `CODEX_TASKS.md` as the implementation sequence.
 
 Good next local-product steps:
 
-1. Add local run progress and cancellation.
-2. Add asset cleanup/storage management.
-3. Improve connector ergonomics with zoom/pan only if the vanilla canvas starts to feel cramped.
-4. Add more WaveSpeed categories only after request parameters are verified.
-5. Delay database/auth/billing/React until the local single-user workflow is stable.
+1. Add asset cleanup/storage management.
+2. Improve connector ergonomics with zoom/pan only if the vanilla canvas starts to feel cramped.
+3. Add more WaveSpeed categories only after request parameters are verified.
+4. Delay database/auth/billing/React until the local single-user workflow is stable.
 
 ## Out of scope for MVP
 

@@ -2,7 +2,7 @@
 
 ## One-Paragraph Summary
 
-This project is a FastAPI plus vanilla HTML/CSS/JS MVP for an AI canvas workflow app inspired by Figma Weave, but intentionally without professional editing tools. Users can create/load local projects, add draggable catalog-driven node cards, manually wire nodes with visual handles, upload assets, run supported WaveSpeed nodes, branch generated outputs, preview media, save node state and positions, configure project settings, use model overrides, estimate local node/workflow cost, run one node or simple graph workflows, export/import portable workflow JSON, duplicate projects, and reuse built-in or local workflow templates. The backend uses local JSON files and local upload/template folders only; there is no database, auth, billing system, React, Next.js, Tailwind, or hardcoded secret.
+This project is a FastAPI plus vanilla HTML/CSS/JS MVP for an AI canvas workflow app inspired by Figma Weave, but intentionally without professional editing tools. Users can create/load local projects, add draggable catalog-driven node cards, manually wire nodes with visual handles, upload assets, queue supported WaveSpeed nodes and simple graph workflows through a local Run Manager, branch generated outputs, preview media, save node state and positions, configure project settings, use model overrides, estimate local node/workflow cost, export/import portable workflow JSON, duplicate projects, and reuse built-in or local workflow templates. The backend uses local JSON files, local upload/template folders, and an in-memory local job queue only; there is no database, auth, billing system, React, Next.js, Tailwind, Redis/Celery, or hardcoded secret.
 
 ## Product Goal
 
@@ -12,7 +12,7 @@ Build a simple AI canvas for composing generation workflows around WaveSpeed mod
 
 - No professional editing tools: no layers panel, masks, brushes, timeline editor, vector editor, crop studio, or Photoshop-style workspace.
 - No React, Next.js, Tailwind, heavy canvas/flow library, or drag-and-drop dependency.
-- No database, multi-user storage, auth, billing, queues, background workers, or production deployment setup.
+- No database, multi-user storage, auth, billing, external queues, production background workers, or production deployment setup.
 - No hardcoded API keys or committed secrets.
 - No invented execution parameters for unverified WaveSpeed model categories.
 
@@ -27,13 +27,14 @@ Build a simple AI canvas for composing generation workflows around WaveSpeed mod
 - WaveSpeed integration: `app/services/wavespeed_adapter.py` wraps the SDK for `run_model`, `upload_file`, and output URL extraction.
 - Model capability source of truth: `app/services/model_catalog.py` plus registry conversion in `app/services/registry.py`.
 - Workflow execution: graph planning/resolution in `app/services/workflow_resolver.py`, workflow endpoints in `app/routers/workflows.py`.
+- Local run management: in-memory queue and single worker in `app/services/run_manager.py`, job endpoints in `app/routers/jobs.py`.
 
 ## Current Backend Files
 
-- `app/main.py`: creates FastAPI app, CORS, router registration, `/uploads` mount, and `/` static frontend mount.
+- `app/main.py`: creates FastAPI app, starts/stops the local run manager through lifespan, registers routers, configures CORS, mounts `/uploads`, and serves the static frontend at `/`.
 - `app/core/config.py`: runtime settings, env loading, runtime directory creation.
 - `app/core/storage.py`: JSON read/write helpers.
-- `app/schemas.py`: Pydantic models for projects, nodes, edges, assets, catalog, run estimates, and run responses.
+- `app/schemas.py`: Pydantic models for projects, nodes, edges, assets, catalog, run estimates, run responses, and queued job requests/status.
 - `app/routers/health.py`: health endpoint.
 - `app/routers/models.py`: simple categories and models registry endpoints.
 - `app/routers/model_catalog.py`: richer catalog and cheapest-model endpoints.
@@ -42,6 +43,7 @@ Build a simple AI canvas for composing generation workflows around WaveSpeed mod
 - `app/routers/assets.py`: upload endpoint with size checking and optional WaveSpeed upload.
 - `app/routers/runs.py`: node estimate and single-node execution endpoints.
 - `app/routers/workflows.py`: workflow plan/run/history endpoints.
+- `app/routers/jobs.py`: local job list/get/cancel/retry/clear and queue endpoints.
 - `app/services/project_store.py`: validates project IDs and persists project JSON.
 - `app/services/portable_project.py`: project export/import/duplicate helpers, sanitization, and ID remapping.
 - `app/services/project_validation.py`: shared settings/model override and edge reference validation.
@@ -50,14 +52,15 @@ Build a simple AI canvas for composing generation workflows around WaveSpeed mod
 - `app/services/model_catalog.py`: catalog entries, costs, enabled flags, planned categories.
 - `app/services/cost_estimator.py`: local cost estimate and guard logic.
 - `app/services/node_runner.py`: prepares inputs, validates runnable models, runs WaveSpeed, stores node output metadata.
+- `app/services/run_manager.py`: local in-process queue, job lifecycle, best-effort cancel, retry, progress counts, duplicate-run checks, and project run history integration.
 - `app/services/wavespeed_adapter.py`: WaveSpeed SDK adapter.
 - `app/services/workflow_resolver.py`: graph normalization, cycle checks, topological planning, input resolution.
 
 ## Current Frontend Files
 
-- `web/index.html`: top bar, node library, canvas, inspector, workflow panels, log area.
-- `web/app.js`: project loading/saving, model library rendering, node forms, node dragging, visual handle wiring, connection SVGs, edge selection/deletion, upload handling, run handling, workflow actions, asset panel, previews, branching.
-- `web/style.css`: dark three-column MVP layout, node card styles, canvas grid, media previews, workflow panels, responsive fallback.
+- `web/index.html`: top bar, collapsible side menus, node library, canvas, inspector, workflow panels, Run Manager panel, log area.
+- `web/app.js`: project loading/saving, model library rendering, node forms, node dragging, visual handle wiring, connection SVGs, edge selection/deletion, upload handling, queued run handling, job polling/cancel/retry, workflow actions, asset panel, previews, branching.
+- `web/style.css`: dark three-column MVP layout, collapsible side-tab controls, node card styles, canvas grid, media previews, workflow/job panels, responsive fallback.
 
 ## Current API Endpoints
 
@@ -86,6 +89,15 @@ Build a simple AI canvas for composing generation workflows around WaveSpeed mod
 - `POST /api/workflows/{project_id}/run-from-node/{node_id}`
 - `POST /api/workflows/{project_id}/run-all`
 - `GET /api/workflows/{project_id}/runs`
+- `GET /api/jobs`
+- `GET /api/jobs/{job_id}`
+- `POST /api/jobs/{job_id}/cancel`
+- `POST /api/jobs/{job_id}/retry`
+- `DELETE /api/jobs/completed`
+- `POST /api/jobs/node`
+- `POST /api/jobs/workflow/selected`
+- `POST /api/jobs/workflow/from-node/{node_id}`
+- `POST /api/jobs/workflow/all`
 - `GET /api/templates`
 - `POST /api/templates`
 - `GET /api/templates/{template_id}`
@@ -105,6 +117,7 @@ Build a simple AI canvas for composing generation workflows around WaveSpeed mod
 - `CanvasEdge`: normalized aliases for `source_node_id`, `target_node_id`, `source_handle`, `target_handle`, `source_output`, `target_input`.
 - `Asset`: `id`, `kind`, `filename`, `content_type`, `local_path`, `public_url`, `wavespeed_url`, `metadata`, `created_at`.
 - `NodeStatus`: `idle`, `queued`, `running`, `success`, `error`, `skipped`.
+- `RunJob`: in-memory local job model with `single_node`, `workflow_selected`, `workflow_from_node`, or `workflow_whole_graph` kind; `queued`, `running`, `success`, `error`, `cancel_requested`, or `cancelled` status; real step-count progress; node/asset/output URL lists; warnings/errors; timestamps.
 - `AssetKind`: `image`, `video`, `audio`, `other`.
 
 ## Enabled WaveSpeed Models
@@ -155,6 +168,10 @@ Built-in templates:
 
 TASK_V6 is implemented. It added Visual Connector Editor v1 without React or a graph library. Node cards show output handles and media input handles. Users can drag from an output handle to a compatible input handle, see a ghost connector, create a validated edge immediately, save/reload the edge in project JSON, select an edge, delete the selected edge, and see connected-input badges with source-node hints. Frontend validation blocks self-loops, exact duplicates, obvious cycles, missing source/target/input, and known incompatible media connections. Branch shortcuts remain available and use the same edge helper. Tests in `tests/test_v6.py` cover backend edge compatibility, workflow planning behavior, and V5 portability/template preservation for V6 edge fields.
 
+## TASK_V7 Summary
+
+TASK_V7 is implemented. It added Local Run Manager v1 without Redis, Celery, a database, WebSockets, or SSE. `app/services/run_manager.py` keeps an in-memory job registry and one local worker queue, starts/stops through FastAPI lifespan, queues single-node and workflow jobs, checks V4 cost guard before queueing, prevents duplicate active node jobs and duplicate active whole-graph jobs, updates node statuses, records real step-count progress, writes terminal jobs into project `runs` history, caps history to the latest 100 entries, supports cancelling queued jobs immediately, marks running jobs as `cancel_requested`, stops workflow jobs between steps when cancellation is requested, and retries failed/cancelled jobs with new job IDs. `app/routers/jobs.py` exposes the `/api/jobs` endpoints. The vanilla frontend now has a Run Manager panel, polls jobs while active, queues normal node/workflow run buttons by default, and provides cancel/retry controls. Tests in `tests/test_v7.py` cover queued node execution, cancellation, retry, workflow cancellation between steps, cost guard blocking, progress totals, filters, clearing completed jobs, and endpoint shape.
+
 ## Current Frontend Behavior
 
 - Opens at `http://localhost:8000`.
@@ -174,18 +191,22 @@ TASK_V6 is implemented. It added Visual Connector Editor v1 without React or a g
 - Upload node stores local assets and can optionally upload to WaveSpeed.
 - Node fields are generated from model field specs where available.
 - Node cards show effective model, output kind, estimated cost, and model source.
-- Run button estimates cost first, respects local cost guard, then calls `/api/runs/node`.
+- Run button estimates cost first, respects local cost guard, then queues `/api/jobs/node`.
 - Output previews support images, videos, audio, copy/open/download actions.
 - Generated image outputs can branch to remix nodes.
 - Image outputs can branch to image-to-video when that model is enabled.
-- Workflow panel can preview plan with total estimated cost, run selected, run from selected, run whole graph, and refresh run history.
-- Workflow run buttons preflight the plan and block/confirm before calling run endpoints when cost guard requires it.
+- Workflow panel can preview plan with total estimated cost, queue selected, queue from selected, queue whole graph, and refresh run history.
+- Workflow run buttons preflight the plan and block/confirm before queueing jobs when cost guard requires it.
+- Run Manager panel shows queued/running/completed jobs with status, current node, step-count progress, timestamps, cancel/retry actions, and open-project action when useful.
+- Left and right side menus are collapsible through persistent side tabs so the canvas can use more horizontal space.
 
 ## Current Known Limitations
 
 - Local JSON storage is not safe for concurrent multi-user production use.
 - No authentication, authorization, user ownership, billing integration, rate limiting, or real cost accounting.
-- WaveSpeed calls are synchronous request/response polling through the SDK; no job queue, retries, cancellation, or progress streaming.
+- Local Run Manager jobs are in-memory only and disappear on server restart; persisted project run history remains in project JSON.
+- Active WaveSpeed SDK calls cannot be force-cancelled locally; running cancellation is best-effort, and workflow cancellation is honored between steps.
+- No production queue, Redis/Celery/RQ, database-backed jobs, WebSockets, SSE, or exact model progress streaming.
 - Cost estimates are local starting estimates, not exact billing or real usage metering.
 - Only the first upstream output URL is used for workflow input mapping.
 - Visual connector editing is intentionally simple: no zoom/pan, minimap, multi-select, or advanced edge routing.
@@ -212,6 +233,7 @@ Then open:
 - `http://localhost:8000/api/models`
 - `http://localhost:8000/api/model-catalog`
 - `http://localhost:8000/api/templates`
+- `http://localhost:8000/api/jobs`
 
 ## Manual Test Path
 
@@ -219,11 +241,11 @@ Then open:
 2. Start the server with `python -m uvicorn app.main:app --reload --port 8000`.
 3. Open `http://localhost:8000`.
 4. Create a project and save it.
-5. Add a Text to Image node, enter a prompt, run it, and confirm an image preview appears.
+5. Add a Text to Image node, enter a prompt, run it, confirm a Run Manager job appears, and confirm an image preview appears after success.
 6. Click Branch from output to create an Image to Image remix node, edit the prompt, run it, and confirm output preview appears.
 7. Upload an image asset, select it in a remix/upscale/remove-background/image-to-video node, run the node, and confirm output asset URLs/previews appear.
 8. Drag nodes, save, refresh, reload the project, and confirm positions remain.
-9. Use Preview Plan and Run Selected/Run From Selected/Run Whole Graph on a small connected graph.
+9. Use Preview Plan and Queue Selected/Queue From Selected/Queue Whole Graph on a small connected graph and confirm job progress uses step counts.
 10. Open `/docs`, `/api/models`, and `/api/model-catalog` to verify API and registry visibility.
 11. Click Export Project and confirm a JSON file downloads.
 12. Click Import Project and select the exported JSON, then confirm a new project loads with the same workflow shape.
@@ -232,28 +254,32 @@ Then open:
 15. Add Text to Image and Image to Image nodes, drag from the Text to Image output handle to the Image to Image `image` input handle, and confirm an edge label appears.
 16. Save, refresh, reload, and confirm the manual edge remains.
 17. Click the edge, delete it, reconnect it, and confirm Preview Plan uses the connection.
+18. Queue a job and cancel it while queued if possible.
+19. Queue a multi-step workflow, request cancel while running, and confirm it stops before the next step.
+20. Simulate or force a failed job, retry it, and confirm the retry uses a new job ID.
+21. Save, refresh, reload, and confirm terminal run history remains.
+22. Restart the server and confirm active in-memory jobs are gone while persisted run history remains.
 
 ## Current Bugs/Risks
 
-- The folder is not currently a Git repository, so tracked/untracked file status cannot be checked with `git status`.
 - Automated browser visual testing may be unavailable in some Codex sessions if the in-app browser backend reports `iab` unavailable. In that case, use HTTP smoke checks and manual browser validation.
-- Live WaveSpeed runs were not re-tested during TASK_V4 documentation.
+- Live WaveSpeed runs require a valid `WAVESPEED_API_KEY` and were not exercised in automated tests.
 - If a user selects a local `localhost` asset URL for WaveSpeed image input, the runner rejects it and asks for a WaveSpeed-uploaded asset or public URL, because WaveSpeed cannot fetch localhost.
 
 ## Recommended Next Major Task
 
-Add local run progress/cancellation or asset cleanup/storage management. Database/auth/billing/React remain premature until the local single-user workflow is steadier.
+Add asset cleanup/storage management. Database/auth/billing/React remain premature until the local single-user workflow is steadier.
 
 ## Compact Upload Context
 
 This is a FastAPI + vanilla HTML/CSS/JS MVP AI canvas app for WaveSpeed workflows. Backend files live in `app/`; frontend files live in `web/`; local project JSON is stored under `data/projects`; uploads go to `data/uploads` and are served from `/uploads`; the frontend is served at `/`. Secrets must stay in environment variables only, especially `WAVESPEED_API_KEY`.
 
-The app currently supports local projects, draggable catalog-driven node cards, node `x`/`y` persistence, visual handle-based edge wiring, edge labels/selection/deletion, connected-input badges, local asset upload with optional WaveSpeed upload, model registry/catalog endpoints, project settings, model overrides, local cost guard, node execution, workflow planning/execution, run history, output assets, media previews, branch creation from image outputs to remix or image-to-video nodes, portable project JSON export/import, local project duplication, and reusable workflow templates.
+The app currently supports local projects, draggable catalog-driven node cards, node `x`/`y` persistence, visual handle-based edge wiring, edge labels/selection/deletion, connected-input badges, local asset upload with optional WaveSpeed upload, model registry/catalog endpoints, project settings, model overrides, local cost guard, queued node/workflow execution through the local Run Manager, job polling/cancel/retry, persistent terminal run history, output assets, media previews, branch creation from image outputs to remix or image-to-video nodes, portable project JSON export/import, local project duplication, and reusable workflow templates.
 
-Core endpoints: `/api/health`, `/api/categories`, `/api/models`, `/api/model-catalog`, `/api/model-catalog/cheapest`, `/api/projects`, `/api/projects/{project_id}/settings`, `/api/projects/{project_id}/export`, `/api/projects/import`, `/api/projects/{project_id}/duplicate`, `/api/templates`, `/api/assets/upload`, `/api/runs/estimate`, `/api/runs/node`, `/api/workflows/{project_id}/plan`, `/api/workflows/{project_id}/run-selected`, `/api/workflows/{project_id}/run-from-node/{node_id}`, `/api/workflows/{project_id}/run-all`, `/api/workflows/{project_id}/runs`, `/docs`, and `/`.
+Core endpoints: `/api/health`, `/api/categories`, `/api/models`, `/api/model-catalog`, `/api/model-catalog/cheapest`, `/api/projects`, `/api/projects/{project_id}/settings`, `/api/projects/{project_id}/export`, `/api/projects/import`, `/api/projects/{project_id}/duplicate`, `/api/templates`, `/api/assets/upload`, `/api/runs/estimate`, `/api/runs/node`, `/api/workflows/{project_id}/plan`, `/api/workflows/{project_id}/run-selected`, `/api/workflows/{project_id}/run-from-node/{node_id}`, `/api/workflows/{project_id}/run-all`, `/api/workflows/{project_id}/runs`, `/api/jobs`, `/api/jobs/node`, `/api/jobs/workflow/selected`, `/api/jobs/workflow/from-node/{node_id}`, `/api/jobs/workflow/all`, `/docs`, and `/`.
 
 Enabled runnable WaveSpeed models are `wavespeed-ai/z-image/turbo` for text-to-image, `wavespeed-ai/z-image-turbo/image-to-image` for remix, `wavespeed-ai/image-upscaler`, `wavespeed-ai/image-background-remover`, `wavespeed-ai/wan-2.2/i2v-480p-ultra-fast` for image-to-video, and `wavespeed-ai/qwen3-tts/text-to-speech`. Disabled/planned categories remain visible but non-runnable: reference-to-image, remove-object, start/end video, text-to-video, reference-to-video, video extend/effect, text-to-audio, speech-to-text, generate voice, avatar/lip-sync/portrait transfer, image-to-3D, text-to-3D, and generic WaveSpeed.
 
-TASK_V2 is implemented: workflow graph planning, selected/from-node/all runs, run history, edge normalization, cycle detection, topological order, and frontend workflow controls. TASK_V3 is implemented: richer model catalog, overrides/cost guard schemas, cost estimator, enabled verified safe models, frontend catalog UI, media previews, asset grid, branch-to-video, and tests. TASK_V4 is implemented: settings endpoints/UI, override validation, workflow cost totals, workflow cost blocking, catalog-driven node library cleanup, node effective-model display, and tests.
+TASK_V2 is implemented: workflow graph planning, selected/from-node/all runs, run history, edge normalization, cycle detection, topological order, and frontend workflow controls. TASK_V3 is implemented: richer model catalog, overrides/cost guard schemas, cost estimator, enabled verified safe models, frontend catalog UI, media previews, asset grid, branch-to-video, and tests. TASK_V4 is implemented: settings endpoints/UI, override validation, workflow cost totals, workflow cost blocking, catalog-driven node library cleanup, node effective-model display, and tests. TASK_V5 is implemented: export/import/duplicate/templates. TASK_V6 is implemented: visual connector editor. TASK_V7 is implemented: local in-memory Run Manager with queued single-node/workflow jobs, polling UI, best-effort cancel, retry, and project run history integration.
 
-Validation commands: `python -m compileall app`, `node --check web/app.js`, `python -m unittest discover -s tests -v`, and `python -m uvicorn app.main:app --reload --port 8000`. Manual test: open `http://localhost:8000`, create project, add Text to Image and Image to Image, drag output to `image` input, save, refresh, reload, verify edge persistence, run/preview the workflow, branch to Remix, upload/select asset, run remix/upscale/remove-background/image-to-video, and verify positions/previews persist.
+Validation commands: `python -m compileall app`, `node --check web/app.js`, `python -m unittest discover -s tests -v`, and `python -m uvicorn app.main:app --reload --port 8000`. Manual test: open `http://localhost:8000`, create project, add Text to Image and Image to Image, drag output to `image` input, save, refresh, reload, verify edge persistence, queue node and workflow jobs through the Run Manager, cancel/retry jobs, confirm step-count progress and terminal run history, branch to Remix, upload/select asset, run remix/upscale/remove-background/image-to-video, and verify positions/previews persist.
