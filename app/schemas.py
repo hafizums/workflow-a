@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 from uuid import uuid4
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
@@ -252,6 +252,45 @@ class ProjectImportResponse(BaseModel):
     project: Project
     warnings: List[str] = Field(default_factory=list)
     id_map: Dict[str, Dict[str, str]] = Field(default_factory=dict)
+
+
+JobKind = Literal["single_node", "workflow_selected", "workflow_from_node", "workflow_whole_graph"]
+JobStatus = Literal["queued", "running", "success", "error", "cancel_requested", "cancelled"]
+
+
+class RunJob(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("job"))
+    project_id: str
+    kind: JobKind
+    status: JobStatus = "queued"
+    node_id: str | None = None
+    mode: str | None = None
+    request: Dict[str, Any] = Field(default_factory=dict)
+    plan: Dict[str, Any] | None = None
+    progress_current: int = 0
+    progress_total: int = 0
+    current_node_id: str | None = None
+    node_ids: List[str] = Field(default_factory=list)
+    asset_ids: List[str] = Field(default_factory=list)
+    output_urls: List[str] = Field(default_factory=list)
+    warnings: List[Dict[str, Any]] = Field(default_factory=list)
+    errors: List[Dict[str, Any]] = Field(default_factory=list)
+    created_at: datetime = Field(default_factory=utc_now)
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    cancelled_at: datetime | None = None
+
+
+class QueueNodeRunRequest(BaseModel):
+    project_id: str
+    node_id: str
+    save_to_project: bool = True
+
+
+class QueueWorkflowRunRequest(BaseModel):
+    project_id: str
+    node_id: str | None = None
+    mode: Literal["selected", "from_node", "whole_graph"]
 
 
 class WorkflowTemplate(BaseModel):

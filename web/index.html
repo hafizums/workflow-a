@@ -13,8 +13,6 @@
       <span class="muted">Vanilla canvas workflow</span>
     </div>
     <div class="topbar-actions">
-      <button id="toggleNodesBtn" class="panel-toggle" type="button" aria-pressed="false">Hide Nodes</button>
-      <button id="toggleInspectorBtn" class="panel-toggle" type="button" aria-pressed="false">Hide Inspector</button>
       <select id="projectSelect" aria-label="Project"></select>
       <button id="loadProjectBtn">Load</button>
       <button id="newProjectBtn">New Project</button>
@@ -31,6 +29,8 @@
   </header>
 
   <main id="appLayout" class="layout">
+    <button id="toggleNodesBtn" class="panel-tab panel-tab-left" type="button" aria-expanded="true">Nodes</button>
+    <button id="toggleInspectorBtn" class="panel-tab panel-tab-right" type="button" aria-expanded="true">Project</button>
     <aside class="sidebar">
       <h2>Nodes</h2>
       <div id="nodeLibrary" class="node-library"></div>
@@ -70,6 +70,12 @@
       <div id="workflowPlan" class="workflow-panel muted">No plan preview yet.</div>
       <h2>Workflow Messages</h2>
       <div id="workflowMessages" class="workflow-panel muted">No workflow messages.</div>
+      <h2>Run Manager</h2>
+      <div class="run-manager-actions">
+        <button type="button" id="refreshJobsBtn">Refresh Jobs</button>
+        <button type="button" id="clearCompletedJobsBtn">Clear Completed</button>
+      </div>
+      <div id="jobList" class="job-list muted">No jobs loaded.</div>
       <h2>Run History</h2>
       <div id="runHistory" class="workflow-panel muted">No runs loaded.</div>
       <h2>Activity</h2>

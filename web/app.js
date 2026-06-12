@@ -3,6 +3,9 @@ const state = {
   projects: [],
   models: [],
   templates: [],
+  jobs: [],
+  jobStatusById: {},
+  jobsPollingTimer: null,
   selectedNodeId: null,
   selectedEdgeId: null,
   connectingEdge: null,
@@ -18,6 +21,7 @@ const state = {
 const CARD_GAP_X = 330;
 const CARD_BRANCH_OFFSET_Y = 40;
 const MEDIA_INPUT_NAMES = ['image', 'reference_image', 'video', 'audio', 'last_image'];
+const ACTIVE_JOB_STATUSES = ['queued', 'running', 'cancel_requested'];
 const FALLBACK_INPUT_HANDLES = {
   image_to_image: ['image'],
   upscale_image: ['image'],
@@ -792,6 +796,7 @@ function renderAll() {
   renderCanvas();
   renderAssets();
   renderWorkflowPanels();
+  renderJobs();
   renderSettingsPanel();
   renderTemplatesPanel();
   updateWorkflowButtons();
@@ -821,12 +826,14 @@ function renderLayoutState() {
   const nodesBtn = qs('#toggleNodesBtn');
   const inspectorBtn = qs('#toggleInspectorBtn');
   if (nodesBtn) {
-    nodesBtn.textContent = state.ui.leftPanelCollapsed ? 'Show Nodes' : 'Hide Nodes';
-    nodesBtn.setAttribute('aria-pressed', String(state.ui.leftPanelCollapsed));
+    nodesBtn.textContent = 'Nodes';
+    nodesBtn.title = state.ui.leftPanelCollapsed ? 'Show nodes menu' : 'Hide nodes menu';
+    nodesBtn.setAttribute('aria-expanded', String(!state.ui.leftPanelCollapsed));
   }
   if (inspectorBtn) {
-    inspectorBtn.textContent = state.ui.rightPanelCollapsed ? 'Show Inspector' : 'Hide Inspector';
-    inspectorBtn.setAttribute('aria-pressed', String(state.ui.rightPanelCollapsed));
+    inspectorBtn.textContent = 'Project';
+    inspectorBtn.title = state.ui.rightPanelCollapsed ? 'Show project menu' : 'Hide project menu';
+    inspectorBtn.setAttribute('aria-expanded', String(!state.ui.rightPanelCollapsed));
   }
 }
 
@@ -1664,7 +1671,7 @@ function cssEscape(value) {
 async function runNode(nodeId) {
   let node = state.project.nodes.find((item) => item.id === nodeId);
   if (!node) return;
-  node.status = 'running';
+  node.status = 'queued';
   node.error_message = null;
   const model = nodeModel(node);
   if (model?.enabled && node.model_id?.startsWith('TODO_')) {
@@ -1681,20 +1688,19 @@ async function runNode(nodeId) {
       renderCanvas();
       return;
     }
-    const result = await api('/api/runs/node', {
+    const result = await api('/api/jobs/node', {
       method: 'POST',
       body: JSON.stringify({
         project_id: state.project.id,
         node_id: node.id,
-        node_type: node.type,
-        model_id: node.model_id,
-        inputs: node.inputs,
         save_to_project: true,
       }),
     });
-    state.project = await api(`/api/projects/${state.project.id}`);
+    node.status = 'queued';
     renderAll();
-    log(result);
+    await refreshJobs();
+    ensureJobPolling();
+    log(`Job queued: ${result.id}`);
   } catch (error) {
     node.status = 'error';
     node.error_message = error.message;
@@ -1785,9 +1791,9 @@ async function runSelectedWorkflowNode() {
   const node = selectedNode();
   if (!node) return showSelectNodeError();
   if (!await confirmWorkflowPlan('selected', node.id)) return;
-  await runWorkflowRequest(`/api/workflows/${state.project.id}/run-selected`, {
+  await queueWorkflowJob('/api/jobs/workflow/selected', {
     method: 'POST',
-    body: JSON.stringify({ node_id: node.id }),
+    body: JSON.stringify({ project_id: state.project.id, mode: 'selected', node_id: node.id }),
   });
 }
 
@@ -1795,17 +1801,35 @@ async function runFromSelectedNode() {
   const node = selectedNode();
   if (!node) return showSelectNodeError();
   if (!await confirmWorkflowPlan('from_node', node.id)) return;
-  await runWorkflowRequest(`/api/workflows/${state.project.id}/run-from-node/${node.id}`, {
+  await queueWorkflowJob(`/api/jobs/workflow/from-node/${node.id}`, {
     method: 'POST',
+    body: JSON.stringify({ project_id: state.project.id, mode: 'from_node', node_id: node.id }),
   });
 }
 
 async function runWholeGraph() {
   if (!state.project) return log('Create or load a project first.');
   if (!await confirmWorkflowPlan('whole_graph')) return;
-  await runWorkflowRequest(`/api/workflows/${state.project.id}/run-all`, {
+  await queueWorkflowJob('/api/jobs/workflow/all', {
     method: 'POST',
+    body: JSON.stringify({ project_id: state.project.id, mode: 'whole_graph' }),
   });
+}
+
+async function queueWorkflowJob(path, options) {
+  if (!state.project) return log('Create or load a project first.');
+  try {
+    await persistProjectSilently();
+    const job = await api(path, options);
+    await reloadCurrentProject();
+    renderAll();
+    await refreshJobs();
+    ensureJobPolling();
+    log(`Job queued: ${job.id}`);
+  } catch (error) {
+    renderWorkflowMessages([], [{ message: error.message }]);
+    log(error.message);
+  }
 }
 
 async function confirmWorkflowPlan(mode, nodeId = '') {
@@ -1856,6 +1880,168 @@ async function runWorkflowRequest(path, options) {
     log(error.message);
   } finally {
     setWorkflowRunning(false);
+  }
+}
+
+async function reloadCurrentProject() {
+  if (!state.project) return;
+  const projectId = state.project.id;
+  state.project = await api(`/api/projects/${projectId}`);
+  if (!state.project.nodes.some((node) => node.id === state.selectedNodeId)) {
+    state.selectedNodeId = null;
+  }
+  if (!edgeById(state.selectedEdgeId)) {
+    state.selectedEdgeId = null;
+  }
+}
+
+async function refreshJobs() {
+  try {
+    const jobs = await api('/api/jobs?limit=50');
+    const previousStatuses = { ...state.jobStatusById };
+    state.jobs = jobs;
+    state.jobStatusById = Object.fromEntries(jobs.map((job) => [job.id, job.status]));
+    renderJobs();
+
+    const becameTerminalForCurrentProject = jobs.some((job) => {
+      const previous = previousStatuses[job.id];
+      return state.project
+        && job.project_id === state.project.id
+        && previous
+        && ACTIVE_JOB_STATUSES.includes(previous)
+        && isTerminalJob(job);
+    });
+    if (becameTerminalForCurrentProject) {
+      await reloadCurrentProject();
+      renderAll();
+    }
+
+    if (jobs.some(isActiveJob)) {
+      ensureJobPolling();
+    } else {
+      stopJobPolling();
+    }
+  } catch (error) {
+    renderJobsError(error.message);
+    stopJobPolling();
+  }
+}
+
+function ensureJobPolling() {
+  if (state.jobsPollingTimer) return;
+  state.jobsPollingTimer = window.setInterval(refreshJobs, 1500);
+}
+
+function stopJobPolling() {
+  if (!state.jobsPollingTimer) return;
+  window.clearInterval(state.jobsPollingTimer);
+  state.jobsPollingTimer = null;
+}
+
+function isActiveJob(job) {
+  return ACTIVE_JOB_STATUSES.includes(job.status);
+}
+
+function isTerminalJob(job) {
+  return ['success', 'error', 'cancelled'].includes(job.status);
+}
+
+function renderJobsError(message) {
+  const list = qs('#jobList');
+  list.className = 'job-list';
+  list.innerHTML = `<div class="workflow-message error"><strong>error</strong><span>${escapeHtml(message)}</span></div>`;
+}
+
+function renderJobs() {
+  const list = qs('#jobList');
+  if (!state.jobs.length) {
+    list.className = 'job-list muted';
+    list.textContent = 'No jobs yet.';
+    return;
+  }
+  list.className = 'job-list';
+  list.innerHTML = state.jobs.slice(0, 20).map((job) => jobCardHtml(job)).join('');
+  list.querySelectorAll('[data-job-cancel]').forEach((button) => {
+    button.addEventListener('click', () => cancelJob(button.dataset.jobCancel));
+  });
+  list.querySelectorAll('[data-job-retry]').forEach((button) => {
+    button.addEventListener('click', () => retryJob(button.dataset.jobRetry));
+  });
+  list.querySelectorAll('[data-job-project]').forEach((button) => {
+    button.addEventListener('click', () => loadProject(button.dataset.jobProject));
+  });
+}
+
+function jobCardHtml(job) {
+  const currentNode = state.project?.nodes?.find((node) => node.id === job.current_node_id);
+  const projectName = state.projects.find((project) => project.id === job.project_id)?.name || job.project_id;
+  const message = job.errors?.[0]?.message || job.warnings?.[0]?.message || '';
+  const canCancel = ['queued', 'running', 'cancel_requested'].includes(job.status);
+  const canRetry = ['error', 'cancelled'].includes(job.status);
+  return `
+    <article class="job-card job-${attr(job.status.replaceAll('_', '-'))}">
+      <header>
+        <strong>${escapeHtml(shortId(job.id))}</strong>
+        <span class="job-status">${escapeHtml(job.status)}</span>
+      </header>
+      <div class="job-meta">
+        <span>${escapeHtml(job.kind)}</span>
+        <span>${escapeHtml(projectName)}</span>
+        <span>${escapeHtml(job.current_node_id ? currentNode?.title || job.current_node_id : 'no active step')}</span>
+        <span>${Number(job.progress_current || 0)} / ${Number(job.progress_total || 0)} steps</span>
+      </div>
+      ${message ? `<div class="job-message">${escapeHtml(message)}</div>` : ''}
+      <div class="job-times">
+        ${job.started_at ? `<span>Started ${escapeHtml(formatDate(job.started_at))}</span>` : '<span>Queued</span>'}
+        ${job.finished_at ? `<span>Finished ${escapeHtml(formatDate(job.finished_at))}</span>` : ''}
+      </div>
+      <div class="job-actions">
+        ${canCancel ? `<button type="button" data-job-cancel="${attr(job.id)}">${job.status === 'queued' ? 'Cancel' : 'Request Cancel'}</button>` : ''}
+        ${canRetry ? `<button type="button" data-job-retry="${attr(job.id)}">Retry</button>` : ''}
+        ${state.project?.id !== job.project_id ? `<button type="button" data-job-project="${attr(job.project_id)}">Open Project</button>` : ''}
+      </div>
+    </article>
+  `;
+}
+
+function shortId(value) {
+  return String(value || '').split('_').slice(-1)[0]?.slice(0, 8) || value;
+}
+
+async function cancelJob(jobId) {
+  try {
+    const job = await api(`/api/jobs/${jobId}/cancel`, { method: 'POST' });
+    await refreshJobs();
+    if (job.project_id === state.project?.id) {
+      await reloadCurrentProject();
+      renderAll();
+    }
+    log(job.status === 'cancel_requested'
+      ? 'Cancel requested. The active WaveSpeed call may finish first.'
+      : 'Queued job cancelled.');
+  } catch (error) {
+    log(error.message);
+  }
+}
+
+async function retryJob(jobId) {
+  try {
+    const job = await api(`/api/jobs/${jobId}/retry`, { method: 'POST' });
+    await refreshJobs();
+    ensureJobPolling();
+    log(`Retry queued: ${job.id}`);
+  } catch (error) {
+    log(error.message);
+  }
+}
+
+async function clearCompletedJobs() {
+  try {
+    const result = await api('/api/jobs/completed', { method: 'DELETE' });
+    await refreshJobs();
+    log(`Cleared ${result.cleared} completed job${result.cleared === 1 ? '' : 's'}.`);
+  } catch (error) {
+    log(error.message);
   }
 }
 
@@ -1995,6 +2181,10 @@ function updateWorkflowButtons() {
   });
   const deleteEdgeButton = qs('#deleteSelectedEdgeBtn');
   if (deleteEdgeButton) deleteEdgeButton.disabled = !hasProject || !state.selectedEdgeId;
+  ['#refreshJobsBtn', '#clearCompletedJobsBtn'].forEach((selector) => {
+    const element = qs(selector);
+    if (element) element.disabled = false;
+  });
 }
 
 function renderAssets() {
@@ -2096,6 +2286,7 @@ async function boot() {
   } else {
     await createProject();
   }
+  await refreshJobs();
 }
 
 qs('#newProjectBtn').addEventListener('click', createProject);
@@ -2123,6 +2314,8 @@ qs('#runSelectedBtn').addEventListener('click', runSelectedWorkflowNode);
 qs('#runFromSelectedBtn').addEventListener('click', runFromSelectedNode);
 qs('#runWholeGraphBtn').addEventListener('click', runWholeGraph);
 qs('#refreshRunsBtn').addEventListener('click', refreshRunHistory);
+qs('#refreshJobsBtn').addEventListener('click', refreshJobs);
+qs('#clearCompletedJobsBtn').addEventListener('click', clearCompletedJobs);
 qs('#deleteSelectedEdgeBtn').addEventListener('click', deleteSelectedEdge);
 document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape' && state.connectingEdge) {
