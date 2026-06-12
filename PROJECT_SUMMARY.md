@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This project is a FastAPI plus vanilla HTML/CSS/JavaScript MVP for a lightweight AI canvas workflow app. It lets users build simple WaveSpeed media workflows with projects, draggable node cards, manual visual connections, uploaded assets, generated outputs, branches, queued local runs, run history, project settings, model overrides, local cost guard controls, portable project JSON exports/imports, local project duplication, and reusable workflow templates.
+This project is a FastAPI plus vanilla HTML/CSS/JavaScript MVP for a lightweight AI canvas workflow app. The current frontend is branded as WaveSpeed Studio v8 and lets users build simple WaveSpeed media workflows with projects, draggable node cards, manual visual connections, uploaded assets, generated outputs, branches, queued local runs, run history, project settings, model overrides, local cost guard controls, portable project JSON exports/imports, local project duplication, and reusable workflow templates.
 
 The app is intentionally not a professional editor. It does not include layers, masks, brushes, vector tools, timelines, keyframes, React, React Flow, databases, auth, billing, or multi-user collaboration.
 
@@ -97,13 +97,20 @@ Cost values are local starting estimates only, not exact billing.
 ## Frontend Behavior
 
 - Create/load/save projects.
+- Use a grouped studio command bar instead of a crowded single action row.
 - Add catalog-driven nodes from `/api/models`.
+- Search the node library and filter it by dynamic category chips.
 - Disabled planned nodes show as coming soon and cannot be added.
 - Upload image assets locally and optionally upload to WaveSpeed.
 - Drag node cards and save positions.
 - Drag from output handles to media input handles to create manual workflow edges.
 - See ghost connector lines while wiring nodes.
 - Select SVG edges, see target-input labels, and delete selected edges.
+- View canvas stats for nodes, edges, assets, and active jobs.
+- View a canvas selection bar for selected nodes or edges.
+- Use a tabbed inspector with Project, Workflow, Runs, and Activity sections.
+- Use toast notifications for common actions while keeping the Activity log.
+- Use keyboard shortcuts for save, workflow preview/run, inspector tabs, Escape, and selected-edge deletion.
 - See connected-input badges on node fields and disconnect individual inputs.
 - Edit node inputs through simple card forms.
 - Run single nodes with cost preflight.

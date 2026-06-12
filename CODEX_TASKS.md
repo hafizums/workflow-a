@@ -1,6 +1,6 @@
-# Codex Tasks — Build Order
+# Codex Tasks - Build Order
 
-## Phase 0 — Validate scaffold
+## Phase 0 - Validate Scaffold
 
 1. Install dependencies from `requirements.txt`.
 2. Start `python -m uvicorn app.main:app --reload --port 8000`.
@@ -8,7 +8,7 @@
 4. Confirm `/api/models` works.
 5. Confirm static UI loads at `/`.
 
-## Phase 1 — Clean backend foundation
+## Phase 1 - Clean Backend Foundation
 
 1. Add unit tests for config, registry, project CRUD, asset upload, and WaveSpeedAdapter URL extraction.
 2. Move project persistence logic from router into `services/project_store.py`.
@@ -16,23 +16,22 @@
 4. Add consistent API error shape.
 5. Add `.gitignore` for `.env`, `.venv`, `data/uploads`, and generated outputs.
 
-## Phase 2 — Replace raw JSON node editing
+## Phase 2 - Replace Raw JSON Node Editing
 
 1. Generate inspector forms from `ModelSpec.fields`.
 2. Add validation before calling `/api/runs/node`.
 3. Add field types: string, number, integer, boolean, select, asset_url.
 4. Add quick preset prompts.
 
-## Phase 3 — Real canvas
+## Phase 3 - Real Canvas
 
-1. Convert frontend to React.
-2. Add React Flow.
-3. Support draggable nodes.
-4. Support connecting node outputs to node inputs.
-5. Persist node positions and edges.
-6. Add context menu: duplicate, delete, branch from output.
+1. Keep the vanilla canvas for now.
+2. Support draggable nodes.
+3. Support connecting node outputs to node inputs.
+4. Persist node positions and edges.
+5. Add context actions: duplicate, delete, branch from output.
 
-## Phase 4 — Workflow execution
+## Phase 4 - Workflow Execution
 
 1. Add `workflow_resolver.py`.
 2. Resolve connected output asset URL into target input field.
@@ -41,7 +40,7 @@
 5. Add run-whole-graph in topological order.
 6. Add cancellation support where possible.
 
-## Phase 5 — Asset previews
+## Phase 5 - Asset Previews
 
 1. Add image previews in node cards.
 2. Add video preview panel.
@@ -50,7 +49,7 @@
 5. Add download button.
 6. Add asset grid panel.
 
-## Phase 6 — Add more WaveSpeed models
+## Phase 6 - Add More WaveSpeed Models
 
 Only add a model after checking its model page and request parameters.
 
@@ -70,14 +69,23 @@ For each model, update:
 3. Example payload in docs.
 4. Tests.
 
-## Phase 7 — Database
+## Phase 7 - Database
 
 1. Add SQLModel or SQLAlchemy.
 2. Store projects, nodes, edges, assets, and runs.
 3. Add migrations with Alembic.
 4. Keep JSON export/import.
 
-## Phase 8 — Production hardening
+## Phase 8 - UI Upgrade
+
+1. Rework static frontend into WaveSpeed Studio v8 layout.
+2. Add searchable node library and category filters.
+3. Add canvas stats and selection bar.
+4. Add tabbed inspector.
+5. Add toast feedback and keyboard shortcuts.
+6. Preserve existing FastAPI routes and local JSON storage.
+
+## Phase 9 - Production Hardening
 
 1. Add authentication.
 2. Add per-user project permissions.

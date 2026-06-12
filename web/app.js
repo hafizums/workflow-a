@@ -15,6 +15,9 @@ const state = {
   ui: {
     leftPanelCollapsed: false,
     rightPanelCollapsed: false,
+    activeInspectorTab: 'project',
+    nodeLibraryQuery: '',
+    nodeLibraryCategory: 'all',
   },
 };
 
@@ -180,6 +183,7 @@ async function loadProject(projectId) {
   localStorage.setItem('wavespeed_canvas_project_id', state.project.id);
   renderAll();
   log(`Loaded ${state.project.name}`);
+  showToast(`Loaded ${state.project.name}`, 'success');
 }
 
 async function loadSelectedProject() {
@@ -197,6 +201,7 @@ async function createProject() {
   await refreshProjectList();
   renderAll();
   log(state.project);
+  showToast('Project created', 'success');
 }
 
 function updateProjectFieldsFromForm() {
@@ -215,6 +220,7 @@ async function saveProject() {
   await refreshProjectList();
   renderAll();
   log('Project saved.');
+  showToast('Project saved', 'success');
 }
 
 async function exportProject() {
@@ -229,6 +235,7 @@ async function exportProject() {
   const filename = disposition.match(/filename="?([^"]+)"?/i)?.[1] || `wavespeed-workflow-${state.project.id}.json`;
   downloadBlob(blob, filename);
   log(`Exported ${state.project.name}.`);
+  showToast('Project exported', 'success');
 }
 
 function downloadBlob(blob, filename) {
@@ -261,8 +268,10 @@ async function importProjectFile(event) {
     await refreshProjectList();
     renderAll();
     logImportResult('Imported project.', result);
+    showToast('Project imported', 'success');
   } catch (error) {
     log(error.message);
+    showToast(error.message, 'error');
   }
 }
 
@@ -283,8 +292,10 @@ async function duplicateProject() {
     await refreshProjectList();
     renderAll();
     logImportResult('Duplicated project.', result);
+    showToast('Project duplicated', 'success');
   } catch (error) {
     log(error.message);
+    showToast(error.message, 'error');
   }
 }
 
@@ -393,8 +404,10 @@ async function createProjectFromTemplate(templateId) {
     closeTemplatesPanel();
     renderAll();
     log(`Created project from template: ${state.project.name}`);
+    showToast('Project created from template', 'success');
   } catch (error) {
     log(error.message);
+    showToast(error.message, 'error');
   }
 }
 
@@ -405,8 +418,10 @@ async function deleteUserTemplate(templateId) {
     await loadTemplates();
     renderTemplatesPanel();
     log('Template deleted.');
+    showToast('Template deleted', 'success');
   } catch (error) {
     log(error.message);
+    showToast(error.message, 'error');
   }
 }
 
@@ -433,8 +448,10 @@ async function saveCurrentProjectAsTemplate() {
     await loadTemplates();
     renderTemplatesPanel();
     log(`Saved template: ${template.name}`);
+    showToast('Template saved', 'success');
   } catch (error) {
     log(error.message);
+    showToast(error.message, 'error');
   }
 }
 
@@ -560,8 +577,10 @@ async function saveProjectSettings() {
     closeProjectSettings();
     renderAll();
     log('Project settings saved.');
+    showToast('Project settings saved', 'success');
   } catch (error) {
     log(error.message);
+    showToast(error.message, 'error');
   }
 }
 
@@ -578,7 +597,13 @@ async function persistProjectSilently() {
 function renderNodeLibrary() {
   const library = qs('#nodeLibrary');
   library.innerHTML = '';
-  allNodeDefs().forEach((def) => {
+  renderNodeCategoryFilters();
+  const defs = filteredNodeDefs();
+  if (!defs.length) {
+    library.innerHTML = '<div class="empty-state compact-empty"><strong>No nodes match this search.</strong><span>Try clearing the search or switching category.</span></div>';
+    return;
+  }
+  defs.forEach((def) => {
     const item = document.createElement('div');
     const enabled = def.enabled !== false;
     item.className = `library-item ${enabled ? 'enabled' : 'disabled'}`;
@@ -598,6 +623,64 @@ function renderNodeLibrary() {
       if (enabled) addNode(def);
     });
     library.appendChild(item);
+  });
+}
+
+function normalizeCategory(value) {
+  return String(value || 'other').trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '') || 'other';
+}
+
+function libraryCategories() {
+  const categories = new Map([['all', 'All']]);
+  allNodeDefs().forEach((def) => {
+    const key = normalizeCategory(def.category);
+    if (!categories.has(key)) {
+      categories.set(key, String(def.category || 'Other'));
+    }
+  });
+  return Array.from(categories, ([id, label]) => ({ id, label }));
+}
+
+function filteredNodeDefs() {
+  const query = (state.ui.nodeLibraryQuery || '').trim().toLowerCase();
+  const category = state.ui.nodeLibraryCategory || 'all';
+  return allNodeDefs().filter((def) => {
+    const matchesCategory = category === 'all' || normalizeCategory(def.category) === category;
+    const searchable = [
+      def.title,
+      def.type,
+      def.category,
+      def.description,
+      def.model_id,
+      def.id,
+      def.output_kind,
+      def.verification_status,
+    ].join(' ').toLowerCase();
+    return matchesCategory && (!query || searchable.includes(query));
+  });
+}
+
+function renderNodeCategoryFilters() {
+  const container = qs('#nodeCategoryFilters');
+  if (!container) return;
+  const categories = libraryCategories();
+  if (!categories.some((category) => category.id === state.ui.nodeLibraryCategory)) {
+    state.ui.nodeLibraryCategory = 'all';
+  }
+  container.innerHTML = categories.map((category) => `
+    <button
+      type="button"
+      class="category-chip ${category.id === state.ui.nodeLibraryCategory ? 'active' : ''}"
+      data-node-category="${attr(category.id)}"
+      aria-pressed="${category.id === state.ui.nodeLibraryCategory ? 'true' : 'false'}"
+    >${escapeHtml(category.label)}</button>
+  `).join('');
+  container.querySelectorAll('[data-node-category]').forEach((button) => {
+    button.addEventListener('click', () => {
+      state.ui.nodeLibraryCategory = button.dataset.nodeCategory || 'all';
+      saveLayoutPreference();
+      renderNodeLibrary();
+    });
   });
 }
 
@@ -788,11 +871,13 @@ function addNode(def) {
   state.project.nodes.push(node);
   state.selectedNodeId = node.id;
   renderAll();
+  showToast(`Added ${node.title}`, 'success');
 }
 
 function renderAll() {
   renderLayoutState();
   renderProjectPanel();
+  renderNodeLibrary();
   renderCanvas();
   renderAssets();
   renderWorkflowPanels();
@@ -800,6 +885,7 @@ function renderAll() {
   renderSettingsPanel();
   renderTemplatesPanel();
   updateWorkflowButtons();
+  renderStudioChrome();
 }
 
 function loadLayoutPreference() {
@@ -807,9 +893,17 @@ function loadLayoutPreference() {
     const saved = JSON.parse(localStorage.getItem('wavespeed_canvas_layout') || '{}');
     state.ui.leftPanelCollapsed = !!saved.leftPanelCollapsed;
     state.ui.rightPanelCollapsed = !!saved.rightPanelCollapsed;
+    state.ui.activeInspectorTab = ['project', 'workflow', 'runs', 'activity'].includes(saved.activeInspectorTab)
+      ? saved.activeInspectorTab
+      : 'project';
+    state.ui.nodeLibraryQuery = typeof saved.nodeLibraryQuery === 'string' ? saved.nodeLibraryQuery : '';
+    state.ui.nodeLibraryCategory = typeof saved.nodeLibraryCategory === 'string' ? saved.nodeLibraryCategory : 'all';
   } catch {
     state.ui.leftPanelCollapsed = false;
     state.ui.rightPanelCollapsed = false;
+    state.ui.activeInspectorTab = 'project';
+    state.ui.nodeLibraryQuery = '';
+    state.ui.nodeLibraryCategory = 'all';
   }
 }
 
@@ -835,6 +929,94 @@ function renderLayoutState() {
     inspectorBtn.title = state.ui.rightPanelCollapsed ? 'Show project menu' : 'Hide project menu';
     inspectorBtn.setAttribute('aria-expanded', String(!state.ui.rightPanelCollapsed));
   }
+}
+
+function renderStudioChrome() {
+  renderInspectorTabs();
+  renderCanvasStats();
+  renderCanvasSelectionBar();
+  const search = qs('#nodeSearchInput');
+  if (search && search.value !== state.ui.nodeLibraryQuery) {
+    search.value = state.ui.nodeLibraryQuery || '';
+  }
+}
+
+function projectStats() {
+  return {
+    nodes: state.project?.nodes?.length || 0,
+    edges: state.project?.edges?.length || 0,
+    assets: state.project?.assets?.length || 0,
+    activeJobs: activeJobsCount(),
+  };
+}
+
+function activeJobsCount() {
+  return (state.jobs || []).filter((job) => ACTIVE_JOB_STATUSES.includes(job.status)).length;
+}
+
+function renderCanvasStats() {
+  const title = qs('#canvasProjectTitle');
+  if (title) title.textContent = state.project?.name || 'No project loaded';
+  const stats = qs('#canvasStats');
+  if (!stats) return;
+  const values = projectStats();
+  stats.innerHTML = [
+    ['Nodes', values.nodes],
+    ['Edges', values.edges],
+    ['Assets', values.assets],
+    ['Active jobs', values.activeJobs],
+  ].map(([label, value]) => `<span class="stat-pill"><strong>${value}</strong>${label}</span>`).join('');
+}
+
+function renderCanvasSelectionBar() {
+  const bar = qs('#canvasSelectionBar');
+  if (!bar) return;
+  const node = selectedNode();
+  const edge = selectedEdge();
+  if (node) {
+    bar.innerHTML = `<strong>Selected node:</strong> ${escapeHtml(node.title)} <span>${escapeHtml(node.type)} · ${escapeHtml(node.status)}</span>`;
+    return;
+  }
+  if (edge) {
+    bar.innerHTML = `<strong>Selected edge:</strong> ${escapeHtml(sourceNodeTitle(edgeSource(edge)))} -> ${escapeHtml(targetNodeTitle(edgeTarget(edge)))} <span>input ${escapeHtml(edgeTargetInput(edge))}</span>`;
+    return;
+  }
+  bar.innerHTML = '<span>No selection. Drag from an output handle to an input handle to connect nodes.</span>';
+}
+
+function setInspectorTab(tabName) {
+  const valid = ['project', 'workflow', 'runs', 'activity'];
+  state.ui.activeInspectorTab = valid.includes(tabName) ? tabName : 'project';
+  saveLayoutPreference();
+  renderInspectorTabs();
+}
+
+function renderInspectorTabs() {
+  const active = state.ui.activeInspectorTab || 'project';
+  document.querySelectorAll('[data-inspector-tab]').forEach((button) => {
+    const isActive = button.dataset.inspectorTab === active;
+    button.classList.toggle('active', isActive);
+    button.setAttribute('aria-selected', String(isActive));
+  });
+  document.querySelectorAll('[data-inspector-panel]').forEach((panel) => {
+    const isActive = panel.dataset.inspectorPanel === active;
+    panel.classList.toggle('active', isActive);
+    panel.hidden = !isActive;
+  });
+}
+
+function showToast(message, kind = 'info') {
+  const stack = qs('#toastStack');
+  if (!stack || !message) return;
+  const item = document.createElement('div');
+  item.className = `toast toast-${kind}`;
+  item.innerHTML = `
+    <span>${escapeHtml(message)}</span>
+    <button type="button" aria-label="Dismiss notification">x</button>
+  `;
+  item.querySelector('button')?.addEventListener('click', () => item.remove());
+  stack.appendChild(item);
+  window.setTimeout(() => item.remove(), 4200);
 }
 
 function toggleLeftPanel() {
@@ -903,11 +1085,11 @@ function nodeCardHtml(node) {
     ${renderUploadControls(node, def)}
     ${renderPlaceholderNotice(node, def, model)}
     <div class="node-actions">
-      ${isRunnable ? '<button type="button" data-action="run">Run</button>' : ''}
+      ${isRunnable ? '<button type="button" class="primary-action" data-action="run">Run</button>' : ''}
       ${canBranchFromNode(node) ? '<button type="button" data-action="branch">Branch from output</button>' : ''}
       ${canBranchToVideo(node) ? '<button type="button" data-action="branch-video">Animate output</button>' : ''}
       <button type="button" data-action="save">Save</button>
-      <button type="button" data-action="delete">Delete</button>
+      <button type="button" class="danger-action" data-action="delete">Delete</button>
     </div>
     ${node.error_message ? `<div class="node-error">${escapeHtml(node.error_message)}</div>` : ''}
     ${renderOutputPreview(node)}
@@ -1164,6 +1346,7 @@ function selectNode(nodeId) {
   renderCanvas();
   renderWorkflowPanels();
   updateWorkflowButtons();
+  renderStudioChrome();
 }
 
 function selectEdge(edgeId) {
@@ -1172,6 +1355,7 @@ function selectEdge(edgeId) {
   renderCanvas();
   renderWorkflowPanels();
   updateWorkflowButtons();
+  renderStudioChrome();
 }
 
 function beginEdgeConnection(event) {
@@ -1248,6 +1432,7 @@ function createEdgeFromHandles({
   });
   if (!validation.ok) {
     log(validation.message);
+    showToast(validation.message, 'error');
     return null;
   }
 
@@ -1265,7 +1450,10 @@ function createEdgeFromHandles({
   state.selectedNodeId = null;
   renderAll();
   const suffix = validation.warning ? ` ${validation.warning}` : '';
-  if (options.log !== false) log(`Connected ${sourceNodeTitle(sourceNodeId)} -> ${targetNodeTitle(targetNodeId)} ${targetInput}.${suffix}`);
+  if (options.log !== false) {
+    log(`Connected ${sourceNodeTitle(sourceNodeId)} -> ${targetNodeTitle(targetNodeId)} ${targetInput}.${suffix}`);
+    showToast('Connection created', validation.warning ? 'warning' : 'success');
+  }
   return edge;
 }
 
@@ -1374,8 +1562,10 @@ async function copyText(value) {
   try {
     await navigator.clipboard.writeText(value);
     log('Copied output URL.');
+    showToast('URL copied', 'success');
   } catch {
     log(value);
+    showToast('Copy failed; URL printed in Activity', 'warning');
   }
 }
 
@@ -1402,7 +1592,9 @@ function deleteEdge(edgeId) {
   state.project.edges = (state.project.edges || []).filter((edge) => edge.id !== edgeId);
   if (state.selectedEdgeId === edgeId) state.selectedEdgeId = null;
   renderAll();
-  log(before === state.project.edges.length ? 'Edge not found.' : 'Edge deleted. Save project to persist it.');
+  const message = before === state.project.edges.length ? 'Edge not found.' : 'Edge deleted. Save project to persist it.';
+  log(message);
+  showToast(message, before === state.project.edges.length ? 'warning' : 'success');
 }
 
 function setupNodeDrag(card, node) {
@@ -1506,6 +1698,7 @@ function branchFromNode(sourceNodeId) {
     return;
   }
   log('Created remix branch. Save project to persist it.');
+  showToast('Remix branch created', 'success');
 }
 
 function branchToVideoFromNode(sourceNodeId) {
@@ -1553,6 +1746,7 @@ function branchToVideoFromNode(sourceNodeId) {
     return;
   }
   log('Created image-to-video branch. Save project to persist it.');
+  showToast('Image-to-video branch created', 'success');
 }
 
 function ensureConnectionLayer() {
@@ -1701,11 +1895,13 @@ async function runNode(nodeId) {
     await refreshJobs();
     ensureJobPolling();
     log(`Job queued: ${result.id}`);
+    showToast('Job queued', 'success');
   } catch (error) {
     node.status = 'error';
     node.error_message = error.message;
     renderCanvas();
     log(error.message);
+    showToast(error.message, 'error');
   }
 }
 
@@ -1724,6 +1920,7 @@ async function confirmEstimatedRunCost(node) {
     if (estimate.blocked) {
       node.error_message = estimate.cost_guard_message || 'Run blocked by local estimated cost guard.';
       log(node.error_message);
+      showToast(node.error_message, 'error');
       return false;
     }
     if (estimate.requires_confirmation) {
@@ -1731,6 +1928,7 @@ async function confirmEstimatedRunCost(node) {
     }
   } catch (error) {
     log(error.message);
+    showToast(error.message, 'error');
   }
   return true;
 }
@@ -1761,11 +1959,13 @@ async function uploadFromNode(card, node) {
     await persistProjectSilently();
     renderAll();
     log(asset);
+    showToast('Asset uploaded', 'success');
   } catch (error) {
     node.status = 'error';
     node.error_message = error.message;
     renderCanvas();
     log(error.message);
+    showToast(error.message, 'error');
   }
 }
 
@@ -1826,9 +2026,11 @@ async function queueWorkflowJob(path, options) {
     await refreshJobs();
     ensureJobPolling();
     log(`Job queued: ${job.id}`);
+    showToast('Workflow job queued', 'success');
   } catch (error) {
     renderWorkflowMessages([], [{ message: error.message }]);
     log(error.message);
+    showToast(error.message, 'error');
   }
 }
 
@@ -1924,6 +2126,7 @@ async function refreshJobs() {
   } catch (error) {
     renderJobsError(error.message);
     stopJobPolling();
+    showToast(error.message, 'error');
   }
 }
 
@@ -1955,8 +2158,8 @@ function renderJobsError(message) {
 function renderJobs() {
   const list = qs('#jobList');
   if (!state.jobs.length) {
-    list.className = 'job-list muted';
-    list.textContent = 'No jobs yet.';
+    list.className = 'job-list';
+    list.innerHTML = '<div class="empty-state compact-empty"><strong>No jobs yet.</strong><span>Queue a node or workflow run to watch progress here.</span></div>';
     return;
   }
   list.className = 'job-list';
@@ -2019,8 +2222,10 @@ async function cancelJob(jobId) {
     log(job.status === 'cancel_requested'
       ? 'Cancel requested. The active WaveSpeed call may finish first.'
       : 'Queued job cancelled.');
+    showToast(job.status === 'cancel_requested' ? 'Cancel requested' : 'Queued job cancelled', 'warning');
   } catch (error) {
     log(error.message);
+    showToast(error.message, 'error');
   }
 }
 
@@ -2030,8 +2235,10 @@ async function retryJob(jobId) {
     await refreshJobs();
     ensureJobPolling();
     log(`Retry queued: ${job.id}`);
+    showToast('Retry queued', 'success');
   } catch (error) {
     log(error.message);
+    showToast(error.message, 'error');
   }
 }
 
@@ -2040,8 +2247,10 @@ async function clearCompletedJobs() {
     const result = await api('/api/jobs/completed', { method: 'DELETE' });
     await refreshJobs();
     log(`Cleared ${result.cleared} completed job${result.cleared === 1 ? '' : 's'}.`);
+    showToast(`Cleared ${result.cleared} completed job${result.cleared === 1 ? '' : 's'}`, 'success');
   } catch (error) {
     log(error.message);
+    showToast(error.message, 'error');
   }
 }
 
@@ -2089,8 +2298,8 @@ function renderWorkflowPlan(plan) {
   const panel = qs('#workflowPlan');
   const steps = plan?.steps || [];
   if (!steps.length) {
-    panel.className = 'workflow-panel muted';
-    panel.textContent = 'No runnable steps in plan.';
+    panel.className = 'workflow-panel';
+    panel.innerHTML = '<div class="empty-state compact-empty"><strong>No plan preview yet.</strong><span>Preview the workflow to inspect runnable steps and cost estimates.</span></div>';
     return;
   }
   panel.className = 'workflow-panel';
@@ -2126,8 +2335,8 @@ function workflowTotalLabel(plan) {
 function renderWorkflowMessages(warnings = [], errors = []) {
   const panel = qs('#workflowMessages');
   if (!warnings.length && !errors.length) {
-    panel.className = 'workflow-panel muted';
-    panel.textContent = 'No workflow messages.';
+    panel.className = 'workflow-panel';
+    panel.innerHTML = '<div class="empty-state compact-empty"><strong>No workflow messages.</strong><span>Warnings and errors will appear here after planning or running.</span></div>';
     return;
   }
   panel.className = 'workflow-panel';
@@ -2148,8 +2357,8 @@ function messageHtml(item, kind) {
 function renderRunHistory(runs = []) {
   const panel = qs('#runHistory');
   if (!runs.length) {
-    panel.className = 'workflow-panel muted';
-    panel.textContent = 'No runs yet.';
+    panel.className = 'workflow-panel';
+    panel.innerHTML = '<div class="empty-state compact-empty"><strong>No run history yet.</strong><span>Completed jobs are saved here in the project JSON.</span></div>';
     return;
   }
   panel.className = 'workflow-panel';
@@ -2192,7 +2401,7 @@ function renderAssets() {
   list.innerHTML = '';
   const assets = state.project?.assets || [];
   if (!assets.length) {
-    list.innerHTML = '<div class="muted">No assets yet.</div>';
+    list.innerHTML = '<div class="empty-state compact-empty"><strong>No assets yet.</strong><span>Upload an image or run a generation node to create assets.</span></div>';
     return;
   }
   assets.forEach((asset) => {
@@ -2289,6 +2498,22 @@ async function boot() {
   await refreshJobs();
 }
 
+function setupV8EventHandlers() {
+  qs('#nodeSearchInput')?.addEventListener('input', (event) => {
+    state.ui.nodeLibraryQuery = event.target.value;
+    saveLayoutPreference();
+    renderNodeLibrary();
+  });
+
+  document.querySelectorAll('[data-inspector-tab]').forEach((button) => {
+    button.addEventListener('click', () => setInspectorTab(button.dataset.inspectorTab || 'project'));
+  });
+}
+
+function isTypingTarget(target) {
+  return target && ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName);
+}
+
 qs('#newProjectBtn').addEventListener('click', createProject);
 qs('#toggleNodesBtn').addEventListener('click', toggleLeftPanel);
 qs('#toggleInspectorBtn').addEventListener('click', toggleRightPanel);
@@ -2317,15 +2542,55 @@ qs('#refreshRunsBtn').addEventListener('click', refreshRunHistory);
 qs('#refreshJobsBtn').addEventListener('click', refreshJobs);
 qs('#clearCompletedJobsBtn').addEventListener('click', clearCompletedJobs);
 qs('#deleteSelectedEdgeBtn').addEventListener('click', deleteSelectedEdge);
+setupV8EventHandlers();
 document.addEventListener('keydown', (event) => {
-  if (event.key === 'Escape' && state.connectingEdge) {
-    clearConnectingEdge();
-    renderConnections();
-    log('Connection cancelled.');
+  const typing = isTypingTarget(event.target);
+
+  if (event.key === 'Escape') {
+    if (state.connectingEdge) {
+      clearConnectingEdge();
+      renderConnections();
+      log('Connection cancelled.');
+      showToast('Connection cancelled', 'warning');
+      return;
+    }
+    if (state.settingsOpen) {
+      closeProjectSettings();
+      return;
+    }
+    if (state.templatesOpen) {
+      closeTemplatesPanel();
+      return;
+    }
   }
+
+  if (typing) return;
+
+  if (event.altKey && ['1', '2', '3', '4'].includes(event.key)) {
+    event.preventDefault();
+    const tabs = { 1: 'project', 2: 'workflow', 3: 'runs', 4: 'activity' };
+    setInspectorTab(tabs[event.key]);
+    return;
+  }
+
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
+    if (!state.project) return;
+    event.preventDefault();
+    saveProject();
+    return;
+  }
+
+  if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+    event.preventDefault();
+    if (event.shiftKey) {
+      runWholeGraph();
+    } else {
+      previewWorkflowPlan();
+    }
+    return;
+  }
+
   if ((event.key === 'Delete' || event.key === 'Backspace') && state.selectedEdgeId) {
-    const target = event.target;
-    if (target && ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)) return;
     event.preventDefault();
     deleteSelectedEdge();
   }
