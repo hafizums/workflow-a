@@ -27,6 +27,8 @@ def get_estimated_base_cost(
             "estimated_base_cost_usd": None,
             "cost_unit": None,
             "pricing_note": None,
+            "pricing_basis_guess": None,
+            "pricing_formula_raw": None,
             "warning": ESTIMATE_WARNING,
             "enabled": False,
             "enabled_reason": resolution.error,
@@ -40,6 +42,7 @@ def get_estimated_base_cost(
     model = resolution.model
     estimate = model.estimated_base_cost_usd if model else None
     guard = evaluate_cost_guard(estimate, cost_guard)
+    warning = formula_warning(model.pricing_formula_raw if model else None) or ESTIMATE_WARNING
     return {
         "ok": True,
         "node_type": resolved_node_type,
@@ -48,12 +51,23 @@ def get_estimated_base_cost(
         "estimated_base_cost_usd": estimate,
         "cost_unit": model.cost_unit if model else None,
         "pricing_note": model.pricing_note if model else None,
-        "warning": ESTIMATE_WARNING,
+        "pricing_basis_guess": model.pricing_basis_guess if model else None,
+        "pricing_formula_raw": model.pricing_formula_raw if model else None,
+        "warning": warning,
         "enabled": bool(model and model.enabled),
         "enabled_reason": model.enabled_reason if model else None,
         "verification_status": model.verification_status if model else None,
         **guard,
     }
+
+
+def formula_warning(pricing_formula_raw: str | None) -> str | None:
+    if not pricing_formula_raw:
+        return None
+    text = pricing_formula_raw.lower()
+    if any(token in text for token in ("duration", "second", "video", "audio", "resolution", "outputs")):
+        return "Starting estimate only; final cost may vary by duration, media length, resolution, or output count."
+    return None
 
 
 def evaluate_cost_guard(estimate: float | None, cost_guard: CostGuardSettings | None = None) -> dict:

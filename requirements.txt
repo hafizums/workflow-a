@@ -7,3 +7,6 @@ python-multipart>=0.0.9
 aiofiles>=24.1.0
 wavespeed>=0.1.0
 httpx>=0.27.0
+openpyxl>=3.1.0
+imageio>=2.35.0
+imageio-ffmpeg>=0.5.1

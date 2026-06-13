@@ -2,13 +2,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from app.schemas import AssetKind, CategorySpec, CostMetadata, ModelField, ModelSpec, NodeType
+from app.schemas import AssetKind, CategorySpec, CostMetadata, ModelField, ModelSpec, NodeType, WaveSpeedCatalogField, WaveSpeedCatalogModel
+from app.services import catalog_repository
 from app.services.model_catalog import list_catalog_entries
 
 # Only enable model IDs after verifying the WaveSpeed model page, request fields,
 # and matching node-runner preparer.
 
-CATEGORY_ORDER = ["input", "image", "video", "audio", "avatar", "3d", "llm"]
+CATEGORY_ORDER = ["input", "image", "video", "audio", "avatar", "3d", "llm", "training", "moderation", "other"]
 
 CATEGORY_METADATA: dict[str, dict[str, object]] = {
     "input": {
@@ -46,17 +47,51 @@ CATEGORY_METADATA: dict[str, dict[str, object]] = {
         "description": "Generate text and image-aware text responses with WaveSpeed LLM models.",
         "recommended_for_mvp": True,
     },
+    "training": {
+        "label": "Training",
+        "description": "WaveSpeed training and fine-tuning catalog models.",
+        "recommended_for_mvp": False,
+    },
+    "moderation": {
+        "label": "Moderation",
+        "description": "WaveSpeed moderation and safety catalog models.",
+        "recommended_for_mvp": False,
+    },
+    "other": {
+        "label": "Other",
+        "description": "Additional WaveSpeed catalog models.",
+        "recommended_for_mvp": False,
+    },
 }
 
 VERIFIED_FIELDS_BY_NODE_TYPE: dict[NodeType, list[ModelField]] = {
     NodeType.text_to_image: [
         ModelField(name="prompt", type="textarea", required=True, description="Image prompt."),
         ModelField(
+            name="image",
+            type="asset_url",
+            asset_kind=AssetKind.image,
+            required=False,
+            default="",
+            accept="image/*",
+            description="Optional source image supported by wavespeed-ai/z-image/turbo.",
+        ),
+        ModelField(
             name="size",
             type="string",
             required=False,
             default="1024*1024",
             description="Output size, for example 1024*1024.",
+        ),
+        ModelField(
+            name="strength",
+            type="number",
+            required=False,
+            default=0.6,
+            min_value=0,
+            max_value=1,
+            step=0.05,
+            description="Optional source-image transformation strength.",
         ),
         ModelField(name="seed", type="integer", required=False, default=-1, description="-1 means random seed."),
         ModelField(
@@ -144,8 +179,8 @@ VERIFIED_FIELDS_BY_NODE_TYPE: dict[NodeType, list[ModelField]] = {
             type="select",
             required=False,
             default="4k",
-            options=["2k", "4k"],
-            description="Target resolution verified by WaveSpeed docs, for example 2k or 4k.",
+            options=["2k", "4k", "8k"],
+            description="Target resolution verified by the WaveSpeed model catalog.",
         ),
         ModelField(
             name="output_format",
@@ -243,9 +278,16 @@ VERIFIED_FIELDS_BY_NODE_TYPE: dict[NodeType, list[ModelField]] = {
         ModelField(name="prompt", type="textarea", required=True, description="Video prompt."),
         ModelField(name="audio", type="asset_url", asset_kind=AssetKind.audio, required=False, default="", accept="audio/*", description="Optional reference audio."),
         ModelField(name="negative_prompt", type="textarea", required=False, default="", description="Things to avoid."),
-        ModelField(name="size", type="select", required=False, default="1280*720", options=["1280*720", "720*1280"], description="Output size."),
+        ModelField(
+            name="size",
+            type="select",
+            required=False,
+            default="1280*720",
+            options=["1280*720", "720*1280", "1920*1080", "1080*1920"],
+            description="Output size.",
+        ),
         ModelField(name="duration", type="select", required=False, default=5, options=[5, 10], description="Video duration in seconds."),
-        ModelField(name="shot_type", type="select", required=False, default="simple", options=["simple", "complex"], description="Shot complexity."),
+        ModelField(name="shot_type", type="select", required=False, default="single", options=["single", "multi"], description="Shot type."),
         ModelField(name="enable_audio", type="boolean", required=False, default=True, description="Enable generated audio."),
         ModelField(name="enable_prompt_expansion", type="boolean", required=False, default=False, description="Allow WaveSpeed prompt expansion."),
         ModelField(name="seed", type="integer", required=False, default=-1, description="-1 means random seed."),
@@ -269,7 +311,7 @@ VERIFIED_FIELDS_BY_NODE_TYPE: dict[NodeType, list[ModelField]] = {
             description="Optional end-frame guidance image.",
         ),
         ModelField(name="prompt", type="textarea", required=False, default="", description="Optional text direction for the extension."),
-        ModelField(name="duration", type="integer", required=False, default=5, min_value=1, max_value=7, step=1, description="Extension duration in seconds."),
+        ModelField(name="duration", type="number", required=False, default=5, min_value=1, max_value=7, step=1, description="Extension duration in seconds."),
         ModelField(name="resolution", type="select", required=False, default="720p", options=["540p", "720p", "1080p"], description="Output resolution."),
     ],
     NodeType.video_effect: [
@@ -298,6 +340,9 @@ VERIFIED_FIELDS_BY_NODE_TYPE: dict[NodeType, list[ModelField]] = {
                 "shadow_of_terror_video",
                 "not_look_back_video",
                 "turn_into_zombie",
+                "head_to_balloon",
+                "covered_liquid_metal",
+                "wednesdays_vibe",
             ],
             description="Halloween style preset.",
         ),
@@ -452,17 +497,127 @@ def _catalog_entry_to_model(entry) -> ModelSpec:
         docs_url=entry.docs_url,
         verification_status=entry.verification_status,
         enabled_reason=entry.enabled_reason,
+        model_id=entry.default_model_id,
+        primary_capability=node_type.value,
+        capability_tags=[node_type.value],
+        source="curated",
     )
 
 
-def _build_categories() -> list[CategorySpec]:
-    entries = _exposed_catalog_entries()
+CURATED_MODELS: list[ModelSpec] = [_catalog_entry_to_model(entry) for entry in _exposed_catalog_entries()]
+
+
+def _field_from_catalog(field: WaveSpeedCatalogField) -> ModelField:
+    field_type = field.type
+    if field_type in {"asset_url", "file_url"} and _is_media_list_field(field.name, field.description):
+        field_type = "asset_url_list"
+    return ModelField(
+        name=field.name,
+        type=field_type,
+        required=field.required,
+        default=field.default,
+        description=field.description,
+        options=field.options,
+        asset_kind=field.asset_kind,
+        accept=field.accept,
+        min_value=field.min_value,
+        max_value=field.max_value,
+    )
+
+
+def _is_media_list_field(name: str, description: str | None = None) -> bool:
+    value = name.lower()
+    description_value = (description or "").lower()
+    explicit = {
+        "images",
+        "image_urls",
+        "source_images",
+        "target_images",
+        "reference_images",
+        "reference_urls",
+        "refer_images",
+        "mask_images",
+        "clothes_images",
+        "videos",
+        "video_urls",
+        "reference_videos",
+        "ref_videos",
+        "audios",
+        "audio_urls",
+        "reference_audios",
+    }
+    if value in explicit:
+        return True
+    if value.endswith(("_images", "_videos", "_audios")):
+        return True
+    if value == "reference" and "reference image" in description_value:
+        return True
+    return False
+
+
+CURATED_MODEL_IDS = {
+    model_id
+    for model in CURATED_MODELS
+    for model_id in {model.id, model.default_model_id, model.model_id}
+    if model_id
+}
+
+
+def _catalog_model_to_spec(model: WaveSpeedCatalogModel) -> ModelSpec:
+    return ModelSpec(
+        id=model.model_id,
+        model_id=model.model_id,
+        label=model.display_name,
+        node_type=NodeType.generic_wavespeed,
+        category=model.category,
+        output_kind=model.output_kind,
+        enabled=model.enabled and not model.excluded,
+        description=model.raw_schema.get("models_full", {}).get("description") or "",
+        fields=[_field_from_catalog(field) for field in model.fields if not field.disabled],
+        default_model_id=model.model_id,
+        display_name=model.display_name,
+        estimated_base_cost_usd=model.base_price,
+        cost_unit=model.pricing_basis_guess,
+        pricing_note=model.pricing_text_from_description,
+        cost=CostMetadata(
+            estimated_base_cost_usd=model.base_price,
+            cost_unit=model.pricing_basis_guess,
+            pricing_note=model.pricing_text_from_description,
+        ),
+        docs_url=model.docs_url,
+        verification_status="catalog",
+        enabled_reason=model.enabled_reason,
+        primary_capability=model.primary_capability,
+        capability_tags=model.capability_tags,
+        raw_type=model.raw_type,
+        source="catalog",
+        pricing_basis_guess=model.pricing_basis_guess,
+        pricing_formula_raw=model.pricing_formula_raw,
+        pricing_text_from_description=model.pricing_text_from_description,
+        excluded=model.excluded,
+        exclusion_reason=model.exclusion_reason,
+    )
+
+
+def _build_catalog_models() -> list[ModelSpec]:
+    models: list[ModelSpec] = []
+    for catalog_model in catalog_repository.list_catalog_models(include_excluded=False):
+        if catalog_model.model_id in CURATED_MODEL_IDS:
+            continue
+        models.append(_catalog_model_to_spec(catalog_model))
+    return models
+
+
+CATALOG_MODELS: list[ModelSpec] = _build_catalog_models()
+
+
+def _build_categories(models: list[ModelSpec]) -> list[CategorySpec]:
     categories: list[CategorySpec] = []
     for category_id in CATEGORY_ORDER:
-        node_types = [_node_type(entry.node_type) for entry in entries if entry.category == category_id]
+        node_types = sorted({model.node_type for model in models if model.category == category_id}, key=lambda item: item.value)
         if not node_types:
             continue
-        metadata = CATEGORY_METADATA[category_id]
+        metadata = CATEGORY_METADATA.get(category_id, CATEGORY_METADATA["other"])
         categories.append(
             CategorySpec(
                 id=category_id,
@@ -476,8 +631,8 @@ def _build_categories() -> list[CategorySpec]:
     return categories
 
 
-CATEGORIES: list[CategorySpec] = _build_categories()
-MODELS: list[ModelSpec] = [_catalog_entry_to_model(entry) for entry in _exposed_catalog_entries()]
+MODELS: list[ModelSpec] = [*CURATED_MODELS, *CATALOG_MODELS]
+CATEGORIES: list[CategorySpec] = _build_categories(MODELS)
 
 
 @dataclass(frozen=True)
@@ -492,7 +647,21 @@ def get_model(model_id: str) -> ModelSpec | None:
     return next((model for model in MODELS if model.id == model_id), None)
 
 
+def get_model_by_id(model_id: str) -> ModelSpec | None:
+    return next(
+        (
+            model
+            for model in MODELS
+            if model_id in {model.id, model.default_model_id, model.model_id}
+        ),
+        None,
+    )
+
+
 def get_model_for_node(node_type: NodeType, model_id: str) -> ModelSpec | None:
+    exact = get_model_by_id(model_id)
+    if exact and (exact.node_type == node_type or node_type == NodeType.generic_wavespeed or exact.source == "catalog"):
+        return exact
     return next(
         (
             model
@@ -505,6 +674,35 @@ def get_model_for_node(node_type: NodeType, model_id: str) -> ModelSpec | None:
 
 def default_model_for_node_type(node_type: NodeType) -> ModelSpec | None:
     return next((model for model in MODELS if model.node_type == node_type), None)
+
+
+def get_models_for_capability(capability: str) -> list[ModelSpec]:
+    return [
+        model
+        for model in MODELS
+        if model.enabled and (model.primary_capability == capability or capability in model.capability_tags)
+    ]
+
+
+def get_compatible_models(
+    model_or_node,
+    output_kind: AssetKind | None = None,
+    capability: str | None = None,
+) -> list[ModelSpec]:
+    if isinstance(model_or_node, ModelSpec):
+        base_output = output_kind or model_or_node.output_kind
+        base_capability = capability or model_or_node.primary_capability
+    else:
+        base_model = default_model_for_node_type(model_or_node.type)
+        base_output = output_kind or (base_model.output_kind if base_model else None)
+        base_capability = capability or (base_model.primary_capability if base_model else None)
+    return [
+        model
+        for model in MODELS
+        if model.enabled
+        and (base_output is None or model.output_kind == base_output)
+        and (base_capability is None or model.primary_capability == base_capability or base_capability in model.capability_tags)
+    ]
 
 
 def resolve_model_for_node(
@@ -522,6 +720,13 @@ def resolve_model_for_node(
         model_id = override_model_id
         source = "project"
     else:
+        if node_type == NodeType.generic_wavespeed:
+            return ModelResolution(
+                model=None,
+                model_id=None,
+                source="catalog",
+                error="generic_wavespeed nodes require an explicit WaveSpeed model_id.",
+            )
         default_model = default_model_for_node_type(node_type)
         if default_model is None:
             return ModelResolution(
@@ -550,4 +755,4 @@ def resolve_model_for_node(
             error=f"Model {model_id} is not registered for node type {node_type.value}.",
         )
 
-    return ModelResolution(model=model, model_id=model.default_model_id or model.id, source=source)
+    return ModelResolution(model=model, model_id=model.model_id or model.default_model_id or model.id, source=source)

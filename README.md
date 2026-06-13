@@ -24,10 +24,10 @@ app/
   services/portable_project.py
   services/template_store.py
   services/wavespeed_adapter.py
+  frontend/                  React + React Flow source app
   web/
-  index.html                 Vanilla canvas UI
-  style.css                  Basic layout styling
-  app.js                     Vanilla front-end logic and connector editor
+  index.html                 Built static frontend served by FastAPI
+  assets/                    Built frontend CSS/JS assets
 requirements.txt             Python dependencies
 requirements.md              Product + technical requirements for Codex
 CODEX_TASKS.md               Step-by-step implementation tasks
@@ -101,6 +101,38 @@ Run local tests:
 
 ```bat
 python -m pytest
+```
+
+Rebuild the React frontend served by FastAPI:
+
+```bat
+cd frontend
+npm install
+npm run build
+cd ..
+```
+
+During frontend development, run FastAPI on port `8000` and Vite on port `5173`:
+
+```bat
+python -m uvicorn app.main:app --reload --port 8000
+cd frontend
+npm run dev
+```
+
+Regenerate the V11 WaveSpeed catalog:
+
+```bat
+python scripts\import_wavespeed_catalog.py docs\reference\wavespeed_model_catalog_drilldown.xlsx
+```
+
+Catalog endpoints:
+
+```text
+GET /api/model-catalog/summary
+GET /api/model-catalog/models/wavespeed-ai/z-image/turbo
+GET /api/model-catalog/models/alibaba/happyhorse-1.0/text-to-video
+GET /api/models?enabled_only=true
 ```
 
 Run text-to-image from CMD:
@@ -265,9 +297,9 @@ Use `requirements.md` as the product/technical spec and `CODEX_TASKS.md` as the 
 Good next local-product steps:
 
 1. Add asset cleanup/storage management.
-2. Improve connector ergonomics with zoom/pan only if the vanilla canvas starts to feel cramped.
+2. Improve React canvas ergonomics around handles, edge labels, and selection.
 3. Add more WaveSpeed categories only after request parameters are verified.
-4. Delay database/auth/billing/React until the local single-user workflow is stable.
+4. Delay database/auth/billing until the local single-user workflow is stable.
 
 ## Out of scope for MVP
 

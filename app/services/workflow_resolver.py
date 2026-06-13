@@ -121,11 +121,24 @@ def resolve_inputs_for_node(
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     errors: list[dict[str, Any]] = []
     resolved_inputs = dict(node.inputs or {})
+    list_inputs = list_input_names_for_node(node, project)
+    list_entries: dict[str, list[dict[str, Any]]] = {
+        input_name: [
+            {"key": list_input_order_key(value), "value": value}
+            for value in as_list(resolved_inputs.get(input_name))
+        ]
+        for input_name in list_inputs
+    }
     for edge in graph.incoming.get(node.id, []):
         source_node = graph.node_index[edge.source_node_id]
         resolved_output = resolve_source_output(source_node, project, target_input=edge.target_input)
         if resolved_output:
-            resolved_inputs[edge.target_input] = resolved_output
+            if edge.target_input in list_inputs:
+                list_entries.setdefault(edge.target_input, []).append(
+                    {"key": f"edge:{edge.id}", "value": resolved_output}
+                )
+            else:
+                resolved_inputs[edge.target_input] = resolved_output
         else:
             errors.append(
                 error(
@@ -138,7 +151,79 @@ def resolve_inputs_for_node(
                     },
                 )
             )
+    for input_name, entries in list_entries.items():
+        resolved_inputs[input_name] = ordered_list_values(entries, as_list(resolved_inputs.get(f"{input_name}_order")))
     return resolved_inputs, errors
+
+
+def list_input_names_for_node(node: CanvasNode, project: Project) -> set[str]:
+    if node.type in UTILITY_NODE_TYPES:
+        utility = get_utility_tool(node.type)
+        fields = utility.fields if utility else []
+    else:
+        resolution = resolve_model_for_node(
+            node_type=node.type,
+            node_model_id=node.model_id,
+            project_model_overrides=project.settings.model_overrides,
+        )
+        fields = resolution.model.fields if resolution.model else []
+    return {field.name for field in fields if is_list_input_field(field)}
+
+
+def is_list_input_field(field: Any) -> bool:
+    if getattr(field, "type", None) == "asset_url_list":
+        return True
+    name = str(getattr(field, "name", "")).lower()
+    if name in {
+        "images",
+        "image_urls",
+        "source_images",
+        "target_images",
+        "reference_images",
+        "reference_urls",
+        "refer_images",
+        "mask_images",
+        "clothes_images",
+        "videos",
+        "video_urls",
+        "reference_videos",
+        "ref_videos",
+        "audios",
+        "audio_urls",
+        "reference_audios",
+    }:
+        return True
+    if name.endswith(("_images", "_videos", "_audios")):
+        return True
+    description = str(getattr(field, "description", "") or "").lower()
+    return name == "reference" and "reference image" in description
+
+
+def as_list(value: Any) -> list[Any]:
+    if value in (None, ""):
+        return []
+    if isinstance(value, list):
+        return [item for item in value if item not in (None, "")]
+    return [value]
+
+
+def list_input_order_key(value: Any) -> str:
+    return f"asset:{value}" if isinstance(value, str) else str(value)
+
+
+def ordered_list_values(entries: list[dict[str, Any]], order: list[Any]) -> list[Any]:
+    if not order:
+        return [entry["value"] for entry in entries]
+
+    order_index = {str(key): index for index, key in enumerate(order)}
+    fallback = len(order_index)
+    return [
+        entry["value"]
+        for _index, entry in sorted(
+            enumerate(entries),
+            key=lambda pair: (order_index.get(pair[1]["key"], fallback + pair[0]), pair[0]),
+        )
+    ]
 
 
 PROMPT_SOURCE_NODE_TYPES = {"prompt_card", "llm_text", "llm_vision", "speech_to_text"}

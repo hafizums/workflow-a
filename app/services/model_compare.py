@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from app.schemas import CanvasEdge, ComparisonSet, ModelCompareRequest, Project, new_id, utc_now
 from app.services import project_store
-from app.services.registry import MODELS, get_model_for_node, resolve_model_for_node
+from app.services.registry import MODELS, get_model_by_id, get_model_for_node, resolve_model_for_node
 from app.services.run_manager import RunManagerError, run_manager
 from app.services.tool_compatibility import can_compare_models, compatible_models_for_node
 
@@ -19,9 +19,9 @@ async def queue_model_comparison(project: Project, request: ModelCompareRequest)
     if request.model_ids:
         models = []
         for model_id in request.model_ids:
-            model = get_model_for_node(source_node.type, model_id)
+            model = get_model_for_node(source_node.type, model_id) or get_model_by_id(model_id)
             if model is None or not model.enabled:
-                raise CompareError(f"Model {model_id} is not an enabled model for {source_node.type.value}.")
+                raise CompareError(f"Model {model_id} is not an enabled catalog model.")
             models.append(model)
     else:
         models = compatible_models_for_node(source_node, MODELS)

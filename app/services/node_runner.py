@@ -8,7 +8,10 @@ from urllib.parse import urlparse
 
 from app.schemas import ArtifactRole, Asset, AssetKind, CanvasNode, NodeStatus, NodeType, Project
 from app.services import project_store
-from app.services.registry import get_model_for_node
+from app.services import catalog_repository
+from app.services.model_input_resolver import prepare_model_inputs
+from app.services.model_output_normalizer import normalize_model_output
+from app.services.registry import get_model_by_id, get_model_for_node
 from app.services.wavespeed_adapter import WaveSpeedAdapter
 
 GENERATE_IMAGE_MODEL_ID = "wavespeed-ai/z-image/turbo"
@@ -46,19 +49,28 @@ async def run_wavespeed_node(
     project: Project | None = None,
     target_node: CanvasNode | None = None,
 ) -> tuple[dict[str, Any], list[str], list[Asset]]:
-    model_spec = get_model_for_node(node_type, model_id)
+    model_spec = get_model_for_node(node_type, model_id) or get_model_by_id(model_id)
     if model_spec is None:
         raise NodeRunError(f"Model {model_id} is not registered for node type {node_type.value}.")
     if not model_spec.enabled:
         raise NodeRunError(f"Model is disabled in the registry: {model_id}")
-    if model_id in DENYLISTED_MODEL_IDS:
-        raise NodeRunError(f"Model is denylisted: {DENYLISTED_MODEL_IDS[model_id]}")
+    denylist = current_denylist()
+    if model_id in denylist:
+        raise NodeRunError(f"Model is denylisted: {denylist[model_id]}")
 
     preparer = PREPARERS_BY_NODE_TYPE.get(node_type)
-    if preparer is None:
+    use_generic_resolver = node_type == NodeType.generic_wavespeed or model_spec.source == "catalog" or preparer is None
+    if use_generic_resolver:
+        prepared_inputs = await prepare_model_inputs(
+            adapter=adapter,
+            model=model_spec,
+            inputs=dict(inputs),
+            project=project,
+        )
+    elif preparer is None:
         raise NodeRunError(f"No runner preparer is registered for node type {node_type.value}.")
-
-    prepared_inputs = await preparer(adapter, dict(inputs), project)
+    else:
+        prepared_inputs = await preparer(adapter, dict(inputs), project)
     prepared_inputs, optimizer_metadata = await maybe_optimize_prompt(
         adapter=adapter,
         inputs=prepared_inputs,
@@ -71,25 +83,29 @@ async def run_wavespeed_node(
         raw_output = await adapter.run_model(model_id, prepared_inputs)
     if optimizer_metadata:
         raw_output = {**raw_output, "_prompt_optimizer": optimizer_metadata}
-    output_urls = adapter.extract_output_urls(raw_output)
-    text_output = extract_text_output(raw_output)
-    if not output_urls and not text_output:
-        raise NodeRunError("WaveSpeed response did not include any output URLs or text output.")
+    output_urls, output_assets, text_output, structured_output = normalize_model_output(
+        model=model_spec,
+        model_id=model_id,
+        raw_output=raw_output,
+        target_node=target_node,
+    )
+    if not output_urls and not text_output and not structured_output:
+        raise NodeRunError("WaveSpeed response did not include output URLs, text output, or structured output.")
 
-    output_assets = [
-        build_output_asset(
-            model_id=model_id,
-            output_kind=model_spec.output_kind,
-            output_url=url,
-            output_index=index,
-            raw_output=raw_output,
-            target_node=target_node,
-        )
-        for index, url in enumerate(output_urls)
-    ]
-    if target_node and text_output:
-        target_node.last_run = {**target_node.last_run, "text_output": text_output}
+    if target_node:
+        if text_output:
+            target_node.last_run = {**target_node.last_run, "text_output": text_output}
+        if structured_output:
+            target_node.last_run = {**target_node.last_run, "structured_output": structured_output}
     return raw_output, output_urls, output_assets
+
+
+def current_denylist() -> dict[str, str]:
+    denylist = dict(DENYLISTED_MODEL_IDS)
+    for model_id, item in catalog_repository.load_exclusions().items():
+        if item.get("excluded", True):
+            denylist[model_id] = str(item.get("reason") or "Excluded by model_exclusions.json")
+    return denylist
 
 
 def build_output_asset(
@@ -190,8 +206,11 @@ async def prepare_inputs(
         inputs = inputs_or_project if isinstance(inputs_or_project, dict) else {}
 
     preparer = PREPARERS_BY_NODE_TYPE.get(node_type)
-    if preparer is None:
-        raise NodeRunError(f"No runner preparer is registered for node type {node_type.value}.")
+    model = get_model_by_id(model_id)
+    if preparer is None or node_type == NodeType.generic_wavespeed or (model and model.source == "catalog"):
+        if model is None:
+            raise NodeRunError(f"Model {model_id} is not registered.")
+        return await prepare_model_inputs(adapter=adapter, model=model, inputs=inputs, project=project)
     return await preparer(adapter, inputs, project)
 
 
@@ -220,7 +239,10 @@ def node_type_for_model_id(model_id: str) -> NodeType:
     }
     node_type = model_ids.get(model_id)
     if node_type is None:
-        raise NodeRunError(f"Model is not runnable in this MVP phase: {model_id}")
+        model = get_model_by_id(model_id)
+        if model:
+            return model.node_type
+        raise NodeRunError(f"Model is not registered: {model_id}")
     return node_type
 
 
@@ -229,8 +251,13 @@ async def prepare_text_to_image_inputs(
     inputs: dict[str, Any],
     project: Project | None,
 ) -> dict[str, Any]:
-    del adapter, project
-    return prepare_prompt_inputs(dict(inputs))
+    prepared = prepare_prompt_inputs(dict(inputs))
+    if prepared.get("image"):
+        prepared["image"] = await resolve_asset_input(adapter, prepared, project, "image", {AssetKind.image})
+    prepared["seed"] = int_or_default(prepared.get("seed"), -1, "seed")
+    if prepared.get("strength") not in (None, ""):
+        prepared["strength"] = float_or_default(prepared.get("strength"), 0.6, "strength")
+    return clean_inputs(prepared)
 
 
 async def prepare_image_to_image_inputs(
@@ -351,7 +378,7 @@ async def prepare_reference_to_video_inputs(
     prepared.setdefault("negative_prompt", "")
     prepared.setdefault("size", "1280*720")
     prepared["duration"] = int_or_default(prepared.get("duration"), 5, "duration")
-    prepared.setdefault("shot_type", "simple")
+    prepared.setdefault("shot_type", "single")
     prepared.setdefault("enable_audio", True)
     prepared.setdefault("enable_prompt_expansion", False)
     prepared["seed"] = int_or_default(prepared.get("seed"), -1, "seed")
@@ -369,7 +396,7 @@ async def prepare_video_extend_inputs(
         prepared["image"] = await resolve_asset_input(adapter, prepared, project, "image", {AssetKind.image})
     if prepared.get("prompt"):
         prepared["prompt"] = str(prepared["prompt"]).strip()
-    prepared["duration"] = int_or_default(prepared.get("duration"), 5, "duration")
+    prepared["duration"] = float_or_default(prepared.get("duration"), 5, "duration")
     if prepared["duration"] < 1 or prepared["duration"] > 7:
         raise NodeRunError("duration must be between 1 and 7 seconds.")
     prepared.setdefault("resolution", "720p")
@@ -398,6 +425,9 @@ async def prepare_video_effect_inputs(
         "shadow_of_terror_video",
         "not_look_back_video",
         "turn_into_zombie",
+        "head_to_balloon",
+        "covered_liquid_metal",
+        "wednesdays_vibe",
     }:
         raise NodeRunError("template is not supported by vidu/template/halloween.")
     prepared.setdefault("bgm", True)
@@ -849,6 +879,8 @@ def mark_node_success(
     text_output = extract_text_output(raw_output)
     if text_output:
         node.last_run["text_output"] = text_output
+    if not output_urls and not text_output:
+        node.last_run["structured_output"] = raw_output
 
 
 def mark_node_error(node: CanvasNode, error: str) -> None:

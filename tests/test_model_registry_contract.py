@@ -20,7 +20,10 @@ def catalog_audit() -> dict:
     enabled_without_preparer = [
         model
         for model in MODELS
-        if model.enabled and model.node_type != NodeType.upload_image and model.node_type not in PREPARERS_BY_NODE_TYPE
+        if model.enabled
+        and model.node_type != NodeType.upload_image
+        and model.source != "catalog"
+        and model.node_type not in PREPARERS_BY_NODE_TYPE
     ]
     return {
         "total": len(entries),
@@ -54,11 +57,11 @@ def test_enabled_wavespeed_models_have_metadata_fields_and_preparers():
             continue
         assert model.default_model_id, model.id
         assert model.docs_url, model.id
-        assert model.verification_status == "verified", model.id
+        assert model.verification_status in {"verified", "catalog"}, model.id
         assert model.enabled_reason, model.id
         assert model.estimated_base_cost_usd is not None or "unknown" in (model.enabled_reason or "").lower()
         assert model.fields, model.id
-        assert model.node_type in PREPARERS_BY_NODE_TYPE, model.id
+        assert model.source == "catalog" or model.node_type in PREPARERS_BY_NODE_TYPE, model.id
         for field in model.fields:
             if field.type == "asset_url":
                 assert field.asset_kind is not None, f"{model.id}:{field.name}"

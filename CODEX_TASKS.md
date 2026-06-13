@@ -78,6 +78,16 @@ For each model, update:
 
 ## Phase 8 - UI Upgrade
 
+## Phase 11 - WaveSpeed Catalog Scale-Out
+
+1. Store the WaveSpeed workbook at `docs/reference/wavespeed_model_catalog_drilldown.xlsx`.
+2. Regenerate `app/data/wavespeed_catalog.normalized.json` with `scripts/import_wavespeed_catalog.py`.
+3. Use curated node types for friendly V9/V10 nodes.
+4. Use `generic_wavespeed` plus exact `model_id` for catalog-scale models.
+5. Keep all executable AI calls on WaveSpeed.
+6. Use `/api/model-catalog/*` for catalog search, schema, capability, and exclusion lookup.
+7. Use mocked tests for catalog runtime paths unless deliberately doing a live smoke test with a real key.
+
 1. Rework static frontend into WaveSpeed Studio v8 layout.
 2. Add searchable node library and category filters.
 3. Add canvas stats and selection bar.

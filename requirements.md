@@ -6,6 +6,8 @@ Build a web app that works like a simple AI canvas workflow builder. The user ca
 
 The product should feel inspired by node-based creative tools, but it must stay simple. It is not a professional editor.
 
+V11 expands this requirement from a small curated model batch to a catalog-driven WaveSpeed runtime. Curated friendly nodes remain, and full-catalog models run as `generic_wavespeed` nodes with exact WaveSpeed `model_id` values and normalized workbook schemas.
+
 ## 2. MVP name
 
 Working name:

@@ -352,9 +352,17 @@ class LocalRunManager:
         job.output_urls.extend(output_urls)
         job.request["model_id"] = resolution.model_id
         job.request["model_display_name"] = resolution.model.label
+        job.request["primary_capability"] = resolution.model.primary_capability
+        job.request["category"] = resolution.model.category
         job.request["estimated_cost_snapshot"] = resolution.model.estimated_base_cost_usd
+        job.request["pricing_basis_guess"] = resolution.model.pricing_basis_guess
+        job.request["pricing_formula_raw"] = resolution.model.pricing_formula_raw
         job.request["input_snapshot"] = dict(node.inputs or {})
         job.request["resolved_input_snapshot"] = dict(resolved_inputs if resolved_inputs is not None else node.inputs or {})
+        job.request["input_summary"] = {"keys": sorted((resolved_inputs if resolved_inputs is not None else node.inputs or {}).keys())}
+        job.request["raw_output"] = raw_output
+        job.request["text_output"] = node_runner.extract_text_output(raw_output)
+        job.request["structured_output"] = raw_output if not output_urls and not job.request["text_output"] else {}
         job.request["raw_output_summary"] = summarize_raw_output(raw_output, output_urls)
         node_runner.mark_node_success(node, resolution.model_id, raw_output, output_urls, node_asset_ids)
 
@@ -401,11 +409,19 @@ class LocalRunManager:
             "model_id": job.request.get("model_id"),
             "model_display_name": job.request.get("model_display_name"),
             "model_version": job.request.get("model_version"),
+            "primary_capability": job.request.get("primary_capability"),
+            "category": job.request.get("category"),
             "input_snapshot": job.request.get("input_snapshot") or job.request,
             "resolved_input_snapshot": job.request.get("resolved_input_snapshot") or {},
+            "input_summary": job.request.get("input_summary") or {},
             "output_artifact_ids": job.asset_ids,
+            "raw_output": job.request.get("raw_output") or {},
+            "text_output": job.request.get("text_output"),
+            "structured_output": job.request.get("structured_output") or {},
             "raw_output_summary": job.request.get("raw_output_summary") or {"output_url_count": len(job.output_urls)},
             "estimated_cost_snapshot": job.request.get("estimated_cost_snapshot"),
+            "pricing_basis_guess": job.request.get("pricing_basis_guess"),
+            "pricing_formula_raw": job.request.get("pricing_formula_raw"),
             "started_at": job.started_at.isoformat() if job.started_at else None,
             "finished_at": job.finished_at.isoformat() if job.finished_at else None,
             "cancelled_at": job.cancelled_at.isoformat() if job.cancelled_at else None,

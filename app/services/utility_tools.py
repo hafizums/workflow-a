@@ -14,6 +14,13 @@ UTILITY_NODE_TYPES = {
     NodeType.note,
     NodeType.group_frame,
     NodeType.export_package,
+    NodeType.video_last_frame,
+    NodeType.stitch_video,
+}
+
+RUNNABLE_LOCAL_UTILITY_NODE_TYPES = {
+    NodeType.video_last_frame,
+    NodeType.stitch_video,
 }
 
 
@@ -139,6 +146,58 @@ UTILITY_TOOLS: list[ModelSpec] = [
         AssetKind.other,
         [ModelField(name="label", type="string", default="Final bundle", description="Package label.")],
         "Collect selected deliverables into an export manifest.",
+    ),
+    utility_model(
+        NodeType.video_last_frame,
+        "Video Last Frame",
+        AssetKind.image,
+        [
+            ModelField(
+                name="video",
+                type="asset_url",
+                required=True,
+                asset_kind=AssetKind.video,
+                accept="video/*",
+                description="Source video asset or connected upstream video output.",
+            ),
+            ModelField(
+                name="output_format",
+                type="select",
+                default="png",
+                options=["png", "jpg", "jpeg"],
+                description="Image format for the extracted final frame.",
+            ),
+        ],
+        "Extract the final frame from a video as an image asset.",
+    ),
+    utility_model(
+        NodeType.stitch_video,
+        "Stitch Videos",
+        AssetKind.video,
+        [
+            ModelField(
+                name="videos",
+                type="asset_url_list",
+                required=True,
+                asset_kind=AssetKind.video,
+                accept="video/*",
+                description="Two or more source video assets or connected upstream video outputs, stitched in order.",
+            ),
+            ModelField(
+                name="resolution",
+                type="select",
+                default="720p",
+                options=["720p", "1080p"],
+                description="Output video resolution. Clips are scaled and padded to this frame size.",
+            ),
+            ModelField(
+                name="fps",
+                type="integer",
+                default=24,
+                description="Output frame rate for the stitched video.",
+            ),
+        ],
+        "Combine multiple videos into one local MP4 output.",
     ),
 ]
 

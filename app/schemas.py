@@ -69,6 +69,8 @@ class NodeType(str, Enum):
     note = "note"
     group_frame = "group_frame"
     export_package = "export_package"
+    video_last_frame = "video_last_frame"
+    stitch_video = "stitch_video"
 
 
 class NodeStatus(str, Enum):
@@ -420,6 +422,62 @@ class ModelField(BaseModel):
     placeholder: str | None = None
 
 
+class WaveSpeedCatalogField(BaseModel):
+    name: str
+    type: str
+    raw_type: str | None = None
+    required: bool = False
+    default: Any = None
+    options: List[Any] = Field(default_factory=list)
+    asset_kind: AssetKind | None = None
+    accept: str | None = None
+    min_value: float | None = None
+    max_value: float | None = None
+    min_items: int | None = None
+    max_items: int | None = None
+    description: str = ""
+    disabled: bool = False
+    raw_schema: Dict[str, Any] = Field(default_factory=dict)
+
+
+class WaveSpeedCatalogModel(BaseModel):
+    model_id: str
+    display_name: str
+    provider: str | None = None
+    family: str | None = None
+    slug_leaf: str | None = None
+    raw_type: str | None = None
+    primary_capability: str
+    capability_tags: List[str] = Field(default_factory=list)
+    category: str = "other"
+    output_kind: AssetKind = AssetKind.other
+    base_price: float | None = None
+    pricing_basis_guess: str | None = None
+    pricing_formula_raw: str | None = None
+    pricing_text_from_description: str | None = None
+    api_path: str | None = None
+    method: str = "POST"
+    server: str | None = None
+    schema_type: str | None = None
+    required_fields: List[str] = Field(default_factory=list)
+    fields: List[WaveSpeedCatalogField] = Field(default_factory=list)
+    supports_prompt: bool = False
+    supports_negative_prompt: bool = False
+    supports_image_input: bool = False
+    supports_video_input: bool = False
+    supports_audio_input: bool = False
+    supports_seed: bool = False
+    supports_prompt_expansion: bool = False
+    supports_base64_output: bool = False
+    sort_order: int = 1000
+    docs_url: str | None = None
+    enabled: bool = True
+    enabled_reason: str | None = None
+    excluded: bool = False
+    exclusion_reason: str = ""
+    raw_schema: Dict[str, Any] = Field(default_factory=dict)
+
+
 class VariantParameter(BaseModel):
     field: str
     values: List[Any] = Field(default_factory=list)
@@ -565,6 +623,16 @@ class ModelSpec(BaseModel):
     docs_url: str | None = None
     verification_status: str = "candidate"
     enabled_reason: str | None = None
+    model_id: str | None = None
+    primary_capability: str | None = None
+    capability_tags: List[str] = Field(default_factory=list)
+    raw_type: str | None = None
+    source: Literal["curated", "catalog", "utility"] = "curated"
+    pricing_basis_guess: str | None = None
+    pricing_formula_raw: str | None = None
+    pricing_text_from_description: str | None = None
+    excluded: bool = False
+    exclusion_reason: str = ""
 
 
 class CategorySpec(BaseModel):
@@ -600,6 +668,8 @@ class EstimateRunResponse(BaseModel):
     estimated_base_cost_usd: float | None = None
     cost_unit: str | None = None
     pricing_note: str | None = None
+    pricing_basis_guess: str | None = None
+    pricing_formula_raw: str | None = None
     warning: str
     enabled: bool = False
     enabled_reason: str | None = None

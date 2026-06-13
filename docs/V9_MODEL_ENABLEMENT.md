@@ -1,6 +1,6 @@
 # V9 Model Enablement
 
-V9 enables a first batch of additional WaveSpeed model workflows while keeping disabled categories explicit. All examples use placeholder URLs and no secrets. Set `WAVESPEED_API_KEY` in the environment before live runs.
+V9 enabled a first batch of additional WaveSpeed model workflows while keeping disabled categories explicit. V11 now adds a catalog-driven runtime on top of those curated nodes, so many models that were previously planned/disabled are available as `generic_wavespeed` catalog models. All examples use placeholder URLs and no secrets. Set `WAVESPEED_API_KEY` in the environment before live runs.
 
 Localhost URLs are not reachable by WaveSpeed. Upload local files with `upload_to_wavespeed=true` or use public HTTPS URLs.
 
@@ -8,6 +8,13 @@ Localhost URLs are not reachable by WaveSpeed. Upload local files with `upload_t
 
 ```bash
 curl http://localhost:8000/api/models
+```
+
+For the full V11 catalog, use:
+
+```bash
+curl http://localhost:8000/api/model-catalog/summary
+curl http://localhost:8000/api/model-catalog?capability=text_to_image
 ```
 
 ## Upload Assets

@@ -20,6 +20,10 @@ V10 adds workflow capabilities inspired by AI canvas production tools while keep
 | Cost snapshot | Helps keep exploration bounded. | Existing cost guard and run snapshots store estimated cost metadata. | No, local estimate only. | Implemented |
 | Reusable project templates | Lets users preserve graph layouts. | Existing template system remains, alongside V10 recipes. | No, local project metadata. | Implemented |
 
+## V11 Catalog Scale-Out Note
+
+V11 keeps these V10 workflow features and makes model selection catalog-aware. Generic `generic_wavespeed` nodes can use exact WaveSpeed model IDs from the normalized workbook catalog, while variants and model comparisons can group compatible models by output kind, required fields, and capability metadata rather than only old node types.
+
 ## Product Guardrails
 
 We replicate workflow functionality, not Figma, Weave, or Weavy branding, visual identity, trade dress, proprietary UI, or marketing copy.
