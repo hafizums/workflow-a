@@ -30,4 +30,4 @@ We replicate workflow functionality, not Figma, Weave, or Weavy branding, visual
 
 All executable AI tools must be WaveSpeed-only. Local utility nodes may orchestrate prompts, references, selection, comparison, packaging, lineage, and cost metadata, but they must not call OpenAI, Anthropic, Google, Runway, Replicate, Fal, Figma, Weave, Weavy, or any other non-WaveSpeed AI API.
 
-Every planned executable capability maps to either an enabled WaveSpeed model in the registry or a local utility node. Disabled registry entries stay visible as planned capabilities until request parameters, output handling, and costs are verified.
+Every executable capability maps to either an enabled WaveSpeed model in the registry/catalog or a local utility node. Runtime-excluded catalog rows are not shown as runnable add-node cards; they remain inspectable through `/api/model-catalog/excluded` until schema, output handling, and cost behavior are supported.

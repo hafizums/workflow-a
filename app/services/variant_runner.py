@@ -86,9 +86,10 @@ async def queue_variant_set(project: Project, request: VariantRunRequest) -> Var
     )
     project.variant_sets.insert(0, variant_set)
 
+    clone_ids: list[str] = []
     for index, inputs in enumerate(payloads):
         clone = source_node.model_copy(deep=True)
-        clone.id = f"{source_node.id}_var_{index + 1}_{variant_set.id[-4:]}"
+        clone.id = unique_node_id(project, f"{source_node.id}_var_{index + 1}_{variant_set.id[-4:]}")
         clone.title = f"{source_node.title} Variant {index + 1}"
         clone.inputs = inputs
         clone.output_asset_ids = []
@@ -100,12 +101,16 @@ async def queue_variant_set(project: Project, request: VariantRunRequest) -> Var
         clone.created_at = utc_now()
         clone.updated_at = utc_now()
         project.nodes.append(clone)
+        clone_ids.append(clone.id)
         extra_nodes, extra_edges = cloned_incoming_prompt_edges(project, source_node, clone, inputs)
         project.nodes.extend(extra_nodes)
         project.edges.extend(extra_edges)
 
     await project_store.save_project(project)
-    for clone in project.nodes[-len(payloads) :]:
+    for clone_id in clone_ids:
+        clone = next((node for node in project.nodes if node.id == clone_id), None)
+        if clone is None:
+            continue
         try:
             job = await run_manager.queue_node_run(
                 project.id,
@@ -143,7 +148,7 @@ def cloned_incoming_prompt_edges(
         clone_edge.to = None
         if source and source.type.value == "prompt_card" and target_input in {"prompt", "text"} and inputs.get(target_input):
             prompt_clone = source.model_copy(deep=True)
-            prompt_clone.id = f"{source.id}_var_{clone_node.id[-6:]}"
+            prompt_clone.id = unique_node_id(project, f"{source.id}_var_{clone_node.id[-6:]}")
             prompt_clone.title = f"{source.title} Variant"
             prompt_clone.inputs = {**prompt_clone.inputs, "text": inputs[target_input]}
             prompt_clone.x = clone_node.x - 340
@@ -158,6 +163,16 @@ def cloned_incoming_prompt_edges(
             clone_edge.from_node = None
         edges.append(clone_edge)
     return extra_nodes, edges
+
+
+def unique_node_id(project: Project, preferred_id: str | None = None) -> str:
+    existing_ids = {node.id for node in project.nodes}
+    if preferred_id and preferred_id not in existing_ids:
+        return preferred_id
+    candidate = new_id("node")
+    while candidate in existing_ids:
+        candidate = new_id("node")
+    return candidate
 
 
 def attach_variant_result(project: Project, variant_set_id: str, job_id: str, artifact_ids: list[str]) -> None:

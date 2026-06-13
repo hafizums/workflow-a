@@ -60,6 +60,7 @@ async def upload_asset(request: Request, file: UploadFile = File(...), upload_to
             adapter = WaveSpeedAdapter(settings)
             asset.wavespeed_url = await adapter.upload_file(destination)
         except Exception as exc:
+            destination.unlink(missing_ok=True)
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     return asset

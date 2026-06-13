@@ -15,7 +15,7 @@ Implemented pieces:
 - Schema-driven input resolver.
 - Generic output normalizer for URL, text, and JSON outputs.
 - Catalog-aware model comparison and variants.
-- Minimal vanilla frontend support for searchable catalog nodes and generic schemas.
+- React/React Flow frontend support for searchable catalog nodes and generic schemas.
 - Cost metadata carries `base_price`, `pricing_basis_guess`, and `pricing_formula_raw`.
 
 Useful checks:
@@ -40,4 +40,3 @@ GET /api/models?enabled_only=true
 ```
 
 Live smoke tests should use a real `WAVESPEED_API_KEY` and small/cheap models first. Unit tests mock WaveSpeed calls and do not spend credits.
-

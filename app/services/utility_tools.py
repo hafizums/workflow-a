@@ -3,6 +3,7 @@ from __future__ import annotations
 from app.schemas import AssetKind, ModelField, ModelSpec, NodeType
 
 UTILITY_NODE_TYPES = {
+    NodeType.upload_image,
     NodeType.prompt_card,
     NodeType.style_card,
     NodeType.character_card,
@@ -16,11 +17,13 @@ UTILITY_NODE_TYPES = {
     NodeType.export_package,
     NodeType.video_last_frame,
     NodeType.stitch_video,
+    NodeType.storyboard_panels,
 }
 
 RUNNABLE_LOCAL_UTILITY_NODE_TYPES = {
     NodeType.video_last_frame,
     NodeType.stitch_video,
+    NodeType.storyboard_panels,
 }
 
 
@@ -95,14 +98,14 @@ UTILITY_TOOLS: list[ModelSpec] = [
         NodeType.asset_input,
         "Asset Input",
         AssetKind.other,
-        [ModelField(name="asset_id", type="string", required=True, description="Project artifact ID.")],
-        "Select an existing project artifact as graph input.",
+        [ModelField(name="asset_id", type="asset_id", required=True, description="Project artifact selected or uploaded from this node.")],
+        "Select or upload a project artifact as graph input.",
     ),
     utility_model(
         NodeType.asset_selector,
         "Asset Selector",
         AssetKind.other,
-        [ModelField(name="selected_asset_id", type="string", default="", description="Chosen upstream artifact ID.")],
+        [ModelField(name="selected_asset_id", type="asset_id", default="", description="Chosen project artifact ID.")],
         "Select one artifact from upstream outputs.",
     ),
     utility_model(
@@ -198,6 +201,40 @@ UTILITY_TOOLS: list[ModelSpec] = [
             ),
         ],
         "Combine multiple videos into one local MP4 output.",
+    ),
+    utility_model(
+        NodeType.storyboard_panels,
+        "Storyboard Panel Detector",
+        AssetKind.image,
+        [
+            ModelField(
+                name="image",
+                type="asset_url",
+                required=True,
+                asset_kind=AssetKind.image,
+                accept="image/*",
+                description="Storyboard sheet image asset or connected upstream image output.",
+            ),
+            ModelField(
+                name="expected_count",
+                type="integer",
+                default="",
+                description="Optional expected panel count. If detection misses panels, this enables a grid fallback.",
+            ),
+            ModelField(
+                name="padding_px",
+                type="integer",
+                default=8,
+                description="Pixels of padding to include around each cropped panel.",
+            ),
+            ModelField(
+                name="debug",
+                type="boolean",
+                default=False,
+                description="Write debug masks and a numbered detection image beside the panel crops.",
+            ),
+        ],
+        "Detect and crop storyboard sheet panels into separate image assets using OpenCV.",
     ),
 ]
 

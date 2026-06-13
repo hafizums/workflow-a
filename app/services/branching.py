@@ -18,12 +18,12 @@ COMPATIBLE_TARGETS: dict[AssetKind, dict[NodeType, list[str]]] = {
         NodeType.remove_object: ["image", "mask_image"],
         NodeType.image_to_video: ["image", "last_image"],
         NodeType.start_end_to_video: ["image", "last_image"],
+        NodeType.video_effect: ["image"],
         NodeType.talking_avatar: ["image", "mask_image"],
     },
     AssetKind.video: {
         NodeType.lip_sync: ["video"],
         NodeType.video_extend: ["video"],
-        NodeType.video_effect: ["video"],
     },
     AssetKind.audio: {
         NodeType.speech_to_text: ["audio"],

@@ -9,6 +9,7 @@ from urllib.parse import urlparse
 from app.schemas import ArtifactRole, Asset, AssetKind, CanvasNode, NodeStatus, NodeType, Project
 from app.services import project_store
 from app.services import catalog_repository
+from app.services.input_safety import InputSafetyError, is_url_private_or_local, require_upload_contained_path
 from app.services.model_input_resolver import prepare_model_inputs
 from app.services.model_output_normalizer import normalize_model_output
 from app.services.registry import get_model_by_id, get_model_for_node
@@ -266,7 +267,10 @@ async def prepare_image_to_image_inputs(
     project: Project | None,
 ) -> dict[str, Any]:
     prepared = prepare_prompt_inputs(dict(inputs))
+    if not prepared.get("image") and prepared.get("reference_image"):
+        prepared["image"] = prepared["reference_image"]
     prepared["image"] = await resolve_image_input(adapter, prepared, project)
+    prepared.pop("reference_image", None)
     prepared["seed"] = int_or_default(prepared.get("seed"), -1, "seed")
     return clean_inputs(prepared)
 
@@ -569,9 +573,14 @@ async def prepare_llm_vision_inputs(
     project: Project | None,
 ) -> dict[str, Any]:
     prepared = await prepare_llm_text_inputs(adapter, inputs, project)
-    image = str(inputs.get("image") or "").strip()
-    if image:
-        prepared["image"] = await resolve_image_input(adapter, inputs, project)
+    image_refs = split_asset_refs(inputs.get("images"))
+    if not image_refs and inputs.get("image"):
+        image_refs = split_asset_refs(inputs.get("image"))
+    if image_refs:
+        prepared["images"] = [
+            await resolve_asset_ref(adapter, image_ref, project, "images", {AssetKind.image})
+            for image_ref in image_refs
+        ]
     return clean_inputs(prepared)
 
 
@@ -695,6 +704,61 @@ async def resolve_image_input(
     return await resolve_asset_input(adapter, inputs, project, "image", {AssetKind.image})
 
 
+def split_asset_refs(value: Any) -> list[str]:
+    if value in (None, ""):
+        return []
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item or "").strip()]
+    refs: list[str] = []
+    for line in str(value or "").replace(",", "\n").splitlines():
+        item = line.strip()
+        if item:
+            refs.append(item)
+    return refs
+
+
+async def resolve_asset_ref(
+    adapter: WaveSpeedAdapter,
+    asset_ref: str,
+    project: Project | None,
+    field_name: str,
+    expected_kinds: set[AssetKind] | None = None,
+) -> str:
+    asset_ref = str(asset_ref or "").strip()
+    if not asset_ref:
+        raise NodeRunError(f"{field_name} is required.")
+
+    asset = find_asset(project, asset_ref)
+    if asset:
+        enforce_asset_kind(asset.kind, expected_kinds, field_name)
+        if asset.wavespeed_url:
+            return asset.wavespeed_url
+        if asset.local_path:
+            path = safe_project_asset_path(asset.local_path, field_name)
+            asset.wavespeed_url = await adapter.upload_file(path)
+            await persist_project_best_effort(project)
+            return asset.wavespeed_url
+        if asset.public_url:
+            if is_local_url(asset.public_url):
+                raise NodeRunError(
+                    f"Localhost {asset.kind.value} URLs are not reachable by WaveSpeed. Upload the asset first."
+                )
+            return asset.public_url
+        raise NodeRunError(f"Selected {field_name} asset has no URL or uploadable local file path.")
+
+    if is_http_url(asset_ref):
+        if is_local_url(asset_ref):
+            kind = kind_label(expected_kinds) if expected_kinds else "asset"
+            raise NodeRunError(f"Localhost {kind} URLs are not reachable by WaveSpeed. Upload the asset first.")
+        inferred_kind = resolve_asset_kind_from_url(asset_ref)
+        if inferred_kind is not AssetKind.other:
+            enforce_asset_kind(inferred_kind, expected_kinds, field_name)
+        return asset_ref
+
+    expected = f" {kind_label(expected_kinds)}" if expected_kinds else ""
+    raise NodeRunError(f"{field_name} must be a public URL or project{expected} asset.")
+
+
 async def resolve_audio_input(
     adapter: WaveSpeedAdapter,
     inputs: dict[str, Any],
@@ -722,42 +786,7 @@ async def resolve_asset_input(
     asset_ref = str(inputs.get(field_name) or fallback_asset_id or "").strip()
     if not asset_ref:
         raise NodeRunError(f"{field_name} is required.")
-
-    asset = find_asset(project, asset_ref)
-    if asset:
-        enforce_asset_kind(asset.kind, expected_kinds, field_name)
-        if asset.wavespeed_url:
-            return asset.wavespeed_url
-        if asset.local_path:
-            asset.wavespeed_url = await adapter.upload_file(Path(asset.local_path))
-            await persist_project_best_effort(project)
-            return asset.wavespeed_url
-        if asset.public_url:
-            if is_local_url(asset.public_url):
-                raise NodeRunError(
-                    f"Localhost {asset.kind.value} URLs are not reachable by WaveSpeed. Upload the asset first."
-                )
-            return asset.public_url
-        raise NodeRunError(f"Selected {field_name} asset has no URL or uploadable local file path.")
-
-    if is_http_url(asset_ref):
-        if is_local_url(asset_ref):
-            kind = kind_label(expected_kinds) if expected_kinds else "asset"
-            raise NodeRunError(f"Localhost {kind} URLs are not reachable by WaveSpeed. Upload the asset first.")
-        inferred_kind = resolve_asset_kind_from_url(asset_ref)
-        if inferred_kind is not AssetKind.other:
-            enforce_asset_kind(inferred_kind, expected_kinds, field_name)
-        return asset_ref
-
-    path = Path(asset_ref)
-    if path.exists():
-        inferred_kind = resolve_asset_kind_from_url(path.as_uri())
-        if inferred_kind is not AssetKind.other:
-            enforce_asset_kind(inferred_kind, expected_kinds, field_name)
-        return await adapter.upload_file(path)
-
-    expected = f" {kind_label(expected_kinds)}" if expected_kinds else ""
-    raise NodeRunError(f"{field_name} must be a public URL, project{expected} asset, or existing local file path.")
+    return await resolve_asset_ref(adapter, asset_ref, project, field_name, expected_kinds)
 
 
 async def persist_project_best_effort(project: Project | None) -> None:
@@ -795,9 +824,17 @@ def is_http_url(value: str) -> bool:
 
 
 def is_local_url(value: str) -> bool:
-    parsed = urlparse(value)
-    host = (parsed.hostname or "").lower()
-    return host in {"localhost", "127.0.0.1", "::1"} or host.startswith("192.168.") or host.startswith("10.")
+    return is_url_private_or_local(value)
+
+
+def safe_project_asset_path(value: str, field_name: str) -> Path:
+    try:
+        path = require_upload_contained_path(Path(value))
+    except (OSError, InputSafetyError) as exc:
+        raise NodeRunError(f"Selected {field_name} asset has an unsafe local file path.") from exc
+    if not path.exists():
+        raise NodeRunError(f"Selected {field_name} asset local file does not exist.")
+    return path
 
 
 def extract_text_output(raw_output: dict[str, Any]) -> str | None:

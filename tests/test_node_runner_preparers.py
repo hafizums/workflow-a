@@ -20,6 +20,7 @@ from app.services.node_runner import (
     prepare_video_effect_inputs,
     run_wavespeed_node,
 )
+from app.services.wavespeed_adapter import WaveSpeedAdapter
 
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "wavespeed"
@@ -126,6 +127,25 @@ class NodeRunnerPreparerTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(prepared["image"], "https://example.com/ref.png")
         self.assertNotIn("reference_image", prepared)
+
+    async def test_image_to_image_accepts_reference_image_alias(self):
+        project = Project(
+            assets=[
+                Asset(id="asset_ref", kind=AssetKind.image, filename="ref.png", public_url="https://example.com/ref.png")
+            ]
+        )
+        adapter = FakeAdapter()
+
+        await run_wavespeed_node(
+            adapter,
+            "wavespeed-ai/z-image-turbo/image-to-image",
+            NodeType.image_to_image,
+            {"prompt": "remix it", "reference_image": "asset_ref"},
+            project=project,
+        )
+
+        self.assertEqual(adapter.calls[0][1]["image"], "https://example.com/ref.png")
+        self.assertNotIn("reference_image", adapter.calls[0][1])
 
     async def test_reference_to_video_maps_reference_image_to_reference_urls(self):
         project = Project(
@@ -394,7 +414,7 @@ class NodeRunnerPreparerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(output_assets, [])
         self.assertEqual(extract_text_output(raw_output), f"Response from {DEEPSEEK_V4_FLASH_MODEL_ID}")
 
-    async def test_llm_vision_node_resolves_optional_image(self):
+    async def test_llm_vision_node_resolves_legacy_optional_image(self):
         adapter = LlmAdapter()
         project = Project(
             assets=[
@@ -412,10 +432,50 @@ class NodeRunnerPreparerTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(adapter.calls[0][0], GPT_5_NANO_MODEL_ID)
         self.assertEqual(adapter.calls[0][1]["text"], "Describe the image")
-        self.assertEqual(adapter.calls[0][1]["image"], "https://example.com/source.png")
+        self.assertEqual(adapter.calls[0][1]["images"], ["https://example.com/source.png"])
         self.assertEqual(output_urls, [])
         self.assertEqual(output_assets, [])
         self.assertEqual(extract_text_output(raw_output), f"Response from {GPT_5_NANO_MODEL_ID}")
+
+    async def test_llm_vision_node_resolves_multiple_images(self):
+        adapter = LlmAdapter()
+        project = Project(
+            assets=[
+                Asset(id="asset_a", kind=AssetKind.image, filename="a.png", public_url="https://example.com/a.png"),
+                Asset(id="asset_b", kind=AssetKind.image, filename="b.png", public_url="https://example.com/b.png"),
+            ]
+        )
+
+        await run_wavespeed_node(
+            adapter,
+            GPT_5_NANO_MODEL_ID,
+            NodeType.llm_vision,
+            {"text": "Compare these images", "images": ["asset_a", "asset_b"]},
+            project=project,
+        )
+
+        self.assertEqual(
+            adapter.calls[0][1],
+            {
+                "text": "Compare these images",
+                "images": ["https://example.com/a.png", "https://example.com/b.png"],
+            },
+        )
+
+    def test_llm_message_content_supports_multiple_images(self):
+        content = WaveSpeedAdapter._llm_message_content(
+            "Compare these images",
+            {"images": ["https://example.com/a.png", "https://example.com/b.png"]},
+        )
+
+        self.assertEqual(
+            content,
+            [
+                {"type": "text", "text": "Compare these images"},
+                {"type": "image_url", "image_url": {"url": "https://example.com/a.png"}},
+                {"type": "image_url", "image_url": {"url": "https://example.com/b.png"}},
+            ],
+        )
 
 
 if __name__ == "__main__":

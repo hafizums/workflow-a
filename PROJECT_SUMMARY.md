@@ -2,22 +2,25 @@
 
 ## Purpose
 
-This project is a FastAPI plus vanilla HTML/CSS/JavaScript MVP for a lightweight AI canvas workflow app. The current frontend is branded as WaveSpeed Studio v8 and lets users build simple WaveSpeed media workflows with projects, draggable node cards, manual visual connections, uploaded assets, generated outputs, branches, queued local runs, run history, project settings, model overrides, local cost guard controls, portable project JSON exports/imports, local project duplication, and reusable workflow templates.
+This project is a FastAPI plus React/React Flow MVP for a lightweight AI canvas workflow app. The frontend source lives in `frontend/` and builds static assets into `web/` for FastAPI to serve. Users can build simple WaveSpeed media workflows with projects, draggable node cards, manual visual connections, uploaded assets, generated outputs, branches, queued local runs, run history, project settings, model overrides, local cost guard controls, portable project JSON exports/imports, local project duplication, and reusable workflow templates.
 
-The app is intentionally not a professional editor. It does not include layers, masks, brushes, vector tools, timelines, keyframes, React, React Flow, databases, auth, billing, or multi-user collaboration.
+The app is intentionally not a professional editor. It does not include layers, masks, brushes, vector tools, timelines, keyframes, databases, auth, billing, or multi-user collaboration.
 
 ## Architecture
 
 - Backend: Python FastAPI in `app/`.
-- Frontend: static vanilla UI in `web/`, served from `/`.
+- Frontend: React + React Flow source in `frontend/`, built to static assets in `web/`, served from `/`.
+- Application orchestration: `app/application/use_cases/` for node runs, workflow runs/plans, jobs, settings, portability, templates, and recipes.
+- Domain policies/results: `app/domain/policies/` and `app/domain/results/` wrap cost guard, prompt-source, edge, model support, import validation, and run-result rules.
+- Ports/adapters: `app/ports/` defines repository/storage/gateway/queue/execution contracts; `app/infrastructure/` provides JSON repositories, local storage, WaveSpeed gateway, in-memory queue, catalog adapter, and a project transaction helper.
 - Project storage: local JSON under `data/projects`.
 - Template storage: local JSON under `data/templates`, plus built-in templates in code.
 - Upload storage: local files under `data/uploads`, served from `/uploads`.
 - WaveSpeed SDK access: only through `app/services/wavespeed_adapter.py`.
 - Model execution: `app/services/node_runner.py`.
 - Model catalog/registry: `app/services/model_catalog.py` and `app/services/registry.py`.
-- Workflow planning/execution: `app/services/workflow_resolver.py` and `app/routers/workflows.py`.
-- Local run management: in-memory queue in `app/services/run_manager.py`, exposed by `app/routers/jobs.py`.
+- Workflow planning/input mapping: `app/services/workflow_resolver.py`; workflow orchestration is in `app/application/use_cases/workflow.py`.
+- Local run management: in-memory queue in `app/services/run_manager.py`, exposed through job use cases and `app/routers/jobs.py`.
 
 ## Main Backend Endpoints
 
@@ -64,6 +67,8 @@ The app is intentionally not a professional editor. It does not include layers, 
 
 ## Enabled WaveSpeed Models
 
+The app exposes a catalog-scale model registry. `/api/models?enabled_only=true` returns curated friendly models plus enabled `generic_wavespeed` catalog entries with exact WaveSpeed `model_id` values. The list below is the curated starter set, not the complete model menu.
+
 - `text_to_image`: `wavespeed-ai/z-image/turbo`
 - `image_to_image`: `wavespeed-ai/z-image-turbo/image-to-image`
 - `reference_to_image`: `wavespeed-ai/z-image-turbo/image-to-image`
@@ -80,7 +85,15 @@ The app is intentionally not a professional editor. It does not include layers, 
 - `talking_avatar`: `wavespeed-ai/infinitetalk`
 - `text_to_3d`: `wavespeed-ai/hunyuan-3d-v3.1/text-to-3d-rapid`
 
-Disabled/planned catalog entries remain visible but non-runnable until their request parameters, response shapes, cost behavior, and product UX are verified.
+Excluded catalog rows are not shown as runnable add-node cards. They remain inspectable through `/api/model-catalog/excluded` and `/api/model-catalog?include_excluded=true`.
+
+## Local Utility Nodes
+
+Utility nodes are local graph helpers and do not call WaveSpeed. `video_last_frame` and `stitch_video` are runnable local utilities; prompt/style/character/asset/selector/compare/variant/reroute/note/group/export nodes are non-runnable helpers that organize graph data and metadata.
+
+## V10 Workflow Reachability
+
+The React canvas exposes recipes, basic branching, utility nodes, uploads, run history, previews, and normal workflow runs. Advanced V10 APIs for variant sets, model comparison sets, artifact winner promotion, export packages, and run snapshot clone/rerun are backend/API-first in the current MVP.
 
 ## Project Settings
 
@@ -103,16 +116,18 @@ Cost guard fields:
 
 Cost values are local starting estimates only, not exact billing.
 
+The frontend displays model and workflow estimate labels in Malaysian Ringgit using the UI-only conversion `USD 1 = RM4.06`. Stored catalog prices, API fields, project settings, and cost guard thresholds remain USD (`*_usd`) and are evaluated as USD on the backend.
+
 ## Frontend Behavior
 
 - Create/load/save projects.
 - Use a grouped studio command bar instead of a crowded single action row.
 - Add catalog-driven nodes from `/api/models`.
 - Search the node library and filter it by dynamic category chips.
-- Disabled planned nodes show as coming soon and cannot be added.
+- Excluded catalog rows stay out of normal runnable add-node menus.
 - Upload image, audio, video, and other assets locally and optionally upload to WaveSpeed.
 - Drag node cards and save positions.
-- Drag from output handles to media input handles to create manual workflow edges.
+- Drag from output handles to media input handles, or click an output handle and then click a compatible input handle, to create manual workflow edges.
 - See ghost connector lines while wiring nodes.
 - Select SVG edges, see target-input labels, and delete selected edges.
 - View canvas stats for nodes, edges, assets, and active jobs.
@@ -138,9 +153,13 @@ Cost values are local starting estimates only, not exact billing.
 
 ## Visual Connector Editor
 
-V6 implements manual wiring without React or a graph library. Node cards expose one primary output handle and media input handles such as `image`, `last_image`, `video`, and `audio`. The frontend blocks self-loops, exact duplicate edges, obvious cycles, missing node references, and known incompatible media connections. New edges are saved in project JSON and are preserved by export/import, duplication, and templates.
+V6 introduced manual wiring and the current UI implements it with React Flow. Node cards expose one primary output handle and media input handles such as `image`, `last_image`, `video`, and `audio`. Users can drag between handles or click an output handle and then a compatible input handle. The frontend blocks self-loops, exact duplicate edges, obvious cycles, missing node references, and known incompatible media connections. New edges are saved in project JSON and are preserved by export/import, duplication, and templates.
 
 Branch buttons remain available as shortcuts and now use the same edge creation helper as manual wiring.
+
+## Prompt Source Rule
+
+Saved project model nodes do not own freeform prompt text directly. Prompt-like model inputs must be connected from a Prompt Card, LLM text/vision node, or speech-to-text transcript node. The frontend renders model prompt fields as read-only connected inputs, and the backend rejects saved-node runs or workflow plans when required prompt/text inputs are missing or sourced from the wrong node type.
 
 ## Local Run Manager
 
@@ -166,8 +185,11 @@ Built-in templates:
 
 ```powershell
 python -m compileall app
-node --check web/app.js
+npm run build --prefix frontend
+$latestJs = Get-ChildItem web\assets\*.js | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+node --check $latestJs.FullName
 python -m unittest discover -s tests -v
+npm run test:e2e --prefix frontend
 python -m uvicorn app.main:app --reload --port 8000
 ```
 

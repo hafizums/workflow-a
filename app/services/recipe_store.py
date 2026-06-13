@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 
-from app.schemas import CanvasEdge, CanvasNode, NodeStatus, NodeType, Project, WorkflowRecipe
+from app.schemas import CanvasEdge, CanvasNode, NodeStatus, NodeType, Project, WorkflowRecipe, new_id
 from app.services import project_store
 from app.services.registry import default_model_for_node_type
 
@@ -313,6 +313,7 @@ async def apply_recipe_to_project(project: Project, recipe_id: str) -> Project:
         id_map[old_id] = node.id
         project.nodes.append(node)
     for edge in edges:
+        edge.id = new_id("edge")
         edge.source_node_id = id_map.get(edge.source_node_id, edge.source_node_id)
         edge.target_node_id = id_map.get(edge.target_node_id, edge.target_node_id)
         project.edges.append(edge)

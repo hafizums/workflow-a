@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 import aiofiles
 
@@ -18,5 +19,7 @@ async def read_json(path: Path, default: Any) -> Any:
 async def write_json(path: Path, payload: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     data = json.dumps(payload, ensure_ascii=False, indent=2, default=str)
-    async with aiofiles.open(path, "w", encoding="utf-8") as file:
+    temp_path = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
+    async with aiofiles.open(temp_path, "w", encoding="utf-8") as file:
         await file.write(data)
+    temp_path.replace(path)

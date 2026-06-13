@@ -71,6 +71,7 @@ class NodeType(str, Enum):
     export_package = "export_package"
     video_last_frame = "video_last_frame"
     stitch_video = "stitch_video"
+    storyboard_panels = "storyboard_panels"
 
 
 class NodeStatus(str, Enum):

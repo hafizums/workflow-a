@@ -5,11 +5,13 @@ from datetime import datetime, timezone
 from typing import Any
 
 from app.core.config import get_settings
-from app.schemas import CanvasNode, NodeStatus, Project, RunJob, new_id
+from app.schemas import Asset, CanvasNode, NodeStatus, NodeType, Project, RunJob, new_id
 from app.services import node_runner, project_store
 from app.services.cost_estimator import evaluate_cost_guard
+from app.services.local_utility_runner import is_runnable_local_utility, run_local_utility
+from app.services.output_node_builder import sync_storyboard_panel_output_nodes
 from app.services.registry import resolve_model_for_node
-from app.services.utility_tools import UTILITY_NODE_TYPES
+from app.services.utility_tools import UTILITY_NODE_TYPES, get_utility_tool
 from app.services.wavespeed_adapter import WaveSpeedAdapter
 from app.services.workflow_resolver import (
     build_execution_plan,
@@ -84,29 +86,38 @@ class LocalRunManager:
         node = find_node(project, node_id)
         if node is None:
             raise RunManagerError("Node not found in project")
-        if node.type in UTILITY_NODE_TYPES:
-            raise RunManagerError("Utility nodes are local-only and do not run directly. Connect this node to a runnable WaveSpeed node and run the downstream node or graph.")
-        self._assert_no_active_node_job(project_id, node_id)
+        if node.type in UTILITY_NODE_TYPES and not is_runnable_local_utility(node.type):
+            raise RunManagerError("This utility node is not directly runnable. Connect it to a runnable node and run the downstream node or graph.")
+        self._assert_no_active_node_set(project_id, [node_id])
         graph = build_graph(project)
         prompt_errors = validate_prompt_card_inputs(node, graph)
         if prompt_errors:
             raise RunManagerError(prompt_errors[0]["message"])
-        resolution = resolve_model_for_node(
-            node_type=node.type,
-            node_model_id=node.model_id,
-            project_model_overrides=project.settings.model_overrides,
-        )
-        if resolution.error:
-            raise RunManagerError(resolution.error)
-        if not resolution.model or not resolution.model.enabled or not resolution.model_id:
-            raise RunManagerError("Node is not backed by an enabled model.")
-        guard = evaluate_cost_guard(resolution.model.estimated_base_cost_usd, project.settings.cost_guard)
-        if guard["blocked"]:
-            raise RunManagerError(guard["cost_guard_message"] or "Run blocked by local estimated cost guard.")
+        if is_runnable_local_utility(node.type):
+            utility = get_utility_tool(node.type)
+            model_id = utility.id if utility else f"local/utility/{node.type.value}"
+            model_label = utility.label if utility else node.title
+            estimated_cost = 0.0
+        else:
+            resolution = resolve_model_for_node(
+                node_type=node.type,
+                node_model_id=node.model_id,
+                project_model_overrides=project.settings.model_overrides,
+            )
+            if resolution.error:
+                raise RunManagerError(resolution.error)
+            if not resolution.model or not resolution.model.enabled or not resolution.model_id:
+                raise RunManagerError("Node is not backed by an enabled model.")
+            guard = evaluate_cost_guard(resolution.model.estimated_base_cost_usd, project.settings.cost_guard)
+            if guard["blocked"]:
+                raise RunManagerError(guard["cost_guard_message"] or "Run blocked by local estimated cost guard.")
+            model_id = resolution.model_id
+            model_label = resolution.model.label
+            estimated_cost = resolution.model.estimated_base_cost_usd
 
         node.status = NodeStatus.queued
         node.error_message = None
-        node.estimated_base_cost_usd = resolution.model.estimated_base_cost_usd
+        node.estimated_base_cost_usd = estimated_cost
         await project_store.save_project(project)
 
         job = RunJob(
@@ -118,9 +129,9 @@ class LocalRunManager:
                 "project_id": project_id,
                 "node_id": node_id,
                 "save_to_project": save_to_project,
-                "model_id": resolution.model_id,
-                "model_display_name": resolution.model.label if resolution.model else None,
-                "estimated_cost_snapshot": resolution.model.estimated_base_cost_usd if resolution.model else None,
+                "model_id": model_id,
+                "model_display_name": model_label,
+                "estimated_cost_snapshot": estimated_cost,
                 "input_snapshot": dict(node.inputs or {}),
                 **(request_metadata or {}),
             },
@@ -149,7 +160,8 @@ class LocalRunManager:
         if errors:
             raise RunManagerError({"ok": False, "errors": errors, "warnings": warnings})
         if not node_ids:
-            raise RunManagerError("No runnable WaveSpeed nodes were selected. Utility nodes are local-only and only feed connected model nodes.")
+            raise RunManagerError("No runnable nodes were selected.")
+        self._assert_no_active_node_set(project_id, node_ids)
         for planned_node_id in node_ids:
             node = find_node(project, planned_node_id)
             if node:
@@ -313,6 +325,9 @@ class LocalRunManager:
         job: RunJob,
         resolved_inputs: dict[str, Any] | None = None,
     ) -> None:
+        if is_runnable_local_utility(node.type):
+            await self._execute_local_utility_node(project, node, job, resolved_inputs=resolved_inputs)
+            return
         resolution = resolve_model_for_node(
             node_type=node.type,
             node_model_id=node.model_id,
@@ -365,6 +380,62 @@ class LocalRunManager:
         job.request["structured_output"] = raw_output if not output_urls and not job.request["text_output"] else {}
         job.request["raw_output_summary"] = summarize_raw_output(raw_output, output_urls)
         node_runner.mark_node_success(node, resolution.model_id, raw_output, output_urls, node_asset_ids)
+
+    async def _execute_local_utility_node(
+        self,
+        project: Project,
+        node: CanvasNode,
+        job: RunJob,
+        resolved_inputs: dict[str, Any] | None = None,
+    ) -> None:
+        utility = get_utility_tool(node.type)
+        model_id = utility.id if utility else f"local/utility/{node.type.value}"
+        inputs = resolved_inputs if resolved_inputs is not None else dict(node.inputs or {})
+        node.estimated_base_cost_usd = 0.0
+        node_runner.mark_node_running(node)
+        await project_store.save_project(project)
+        raw_output, output_urls, output_assets = await run_local_utility(
+            node_type=node.type,
+            inputs=inputs,
+            project=project,
+            target_node=node,
+        )
+        node_asset_ids: list[str] = []
+        created_assets: list[Asset] = []
+        for asset in output_assets:
+            asset.lineage.source_project_id = project.id
+            asset.lineage.source_job_id = job.id
+            asset.lineage.source_run_id = job.id
+            asset.lineage.source_node_id = node.id
+            asset.lineage.source_model_id = model_id
+            asset.lineage.source_input_keys = dict(inputs)
+            if not asset.lineage.source_artifact_ids:
+                asset.lineage.source_artifact_ids = collect_source_artifact_ids(project, inputs)
+            project.assets.append(asset)
+            job.asset_ids.append(asset.id)
+            node_asset_ids.append(asset.id)
+            created_assets.append(asset)
+        created_output_node_ids: list[str] = []
+        if node.type == NodeType.storyboard_panels:
+            created_output_node_ids = sync_storyboard_panel_output_nodes(project, node, created_assets)
+        job.output_urls.extend(output_urls)
+        job.request["model_id"] = model_id
+        job.request["model_display_name"] = utility.label if utility else node.title
+        job.request["primary_capability"] = "local_utility"
+        job.request["category"] = "utility"
+        job.request["estimated_cost_snapshot"] = 0.0
+        job.request["input_snapshot"] = dict(node.inputs or {})
+        job.request["resolved_input_snapshot"] = dict(inputs)
+        job.request["input_summary"] = {"keys": sorted(inputs.keys())}
+        job.request["raw_output"] = raw_output
+        if created_output_node_ids:
+            job.request["output_node_ids"] = created_output_node_ids
+        job.request["text_output"] = None
+        job.request["structured_output"] = raw_output
+        job.request["raw_output_summary"] = summarize_raw_output(raw_output, output_urls)
+        node_runner.mark_node_success(node, model_id, raw_output, output_urls, node_asset_ids)
+        if created_output_node_ids:
+            node.last_run["output_node_ids"] = created_output_node_ids
 
     async def _mark_current_node_error(self, job: RunJob, message: str) -> None:
         if not job.current_node_id:
@@ -438,9 +509,15 @@ class LocalRunManager:
         await project_store.save_project(project)
 
     def _assert_no_active_node_job(self, project_id: str, node_id: str) -> None:
+        self._assert_no_active_node_set(project_id, [node_id])
+
+    def _assert_no_active_node_set(self, project_id: str, node_ids: list[str]) -> None:
+        requested = set(node_ids)
         for job in self.jobs.values():
-            if job.project_id == project_id and node_id in job.node_ids and job.status in ACTIVE_STATUSES:
-                raise RunManagerError("This node already has an active queued or running job.")
+            if job.project_id != project_id or job.status not in ACTIVE_STATUSES:
+                continue
+            if requested.intersection(job.node_ids):
+                raise RunManagerError("This project already has an active queued or running job for one or more selected nodes.")
 
     def _assert_no_active_whole_graph_job(self, project_id: str) -> None:
         for job in self.jobs.values():

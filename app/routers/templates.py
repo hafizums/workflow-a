@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
 
+from app.application.use_cases.templates import TemplateUseCase
 from app.schemas import (
     CreateProjectFromTemplateRequest,
     Project,
@@ -29,7 +30,7 @@ def template_error(exc: Exception) -> HTTPException:
 @router.get("", response_model=list[WorkflowTemplate])
 async def list_templates(category: str | None = None, builtin: bool | None = None):
     try:
-        return await template_store.list_templates(category=category, builtin=builtin)
+        return await TemplateUseCase().list(category=category, builtin=builtin)
     except Exception as exc:
         raise template_error(exc) from exc
 
@@ -37,7 +38,7 @@ async def list_templates(category: str | None = None, builtin: bool | None = Non
 @router.post("", response_model=WorkflowTemplate)
 async def create_template(payload: WorkflowTemplateCreate):
     try:
-        return await template_store.create_template(payload)
+        return await TemplateUseCase().create(payload)
     except Exception as exc:
         raise template_error(exc) from exc
 
@@ -45,16 +46,7 @@ async def create_template(payload: WorkflowTemplateCreate):
 @router.post("/from-project/{project_id}", response_model=WorkflowTemplate)
 async def create_template_from_project(project_id: str, payload: TemplateFromProjectRequest):
     try:
-        project = await project_store.load_project(project_id)
-        return await template_store.create_template_from_project(
-            project,
-            name=payload.name,
-            description=payload.description,
-            category=payload.category,
-            tags=payload.tags,
-            include_outputs=payload.include_outputs,
-            include_settings=payload.include_settings,
-        )
+        return await TemplateUseCase().create_from_project(project_id, payload)
     except project_store.ProjectStoreError as exc:
         raise HTTPException(status_code=404 if isinstance(exc, project_store.ProjectNotFoundError) else 400, detail=str(exc)) from exc
     except Exception as exc:
@@ -64,7 +56,7 @@ async def create_template_from_project(project_id: str, payload: TemplateFromPro
 @router.get("/{template_id}", response_model=WorkflowTemplate)
 async def get_template(template_id: str):
     try:
-        return await template_store.get_template(template_id)
+        return await TemplateUseCase().get(template_id)
     except Exception as exc:
         raise template_error(exc) from exc
 
@@ -72,7 +64,7 @@ async def get_template(template_id: str):
 @router.put("/{template_id}", response_model=WorkflowTemplate)
 async def update_template(template_id: str, payload: WorkflowTemplateUpdate):
     try:
-        return await template_store.update_template(template_id, payload.model_dump(exclude_unset=True))
+        return await TemplateUseCase().update(template_id, payload)
     except Exception as exc:
         raise template_error(exc) from exc
 
@@ -80,7 +72,7 @@ async def update_template(template_id: str, payload: WorkflowTemplateUpdate):
 @router.delete("/{template_id}")
 async def delete_template(template_id: str):
     try:
-        await template_store.delete_template(template_id)
+        await TemplateUseCase().delete(template_id)
     except Exception as exc:
         raise template_error(exc) from exc
     return {"ok": True}
@@ -89,11 +81,6 @@ async def delete_template(template_id: str):
 @router.post("/{template_id}/create-project", response_model=Project)
 async def create_project_from_template(template_id: str, payload: CreateProjectFromTemplateRequest):
     try:
-        template = await template_store.get_template(template_id)
-        return await template_store.create_project_from_template(
-            template,
-            name=payload.name,
-            description=payload.description,
-        )
+        return await TemplateUseCase().create_project_from_template(template_id, payload)
     except Exception as exc:
         raise template_error(exc) from exc

@@ -4,12 +4,13 @@ from collections import deque
 from dataclasses import dataclass
 from typing import Any
 
-from app.schemas import Asset, CanvasNode, Project
+from app.schemas import Asset, AssetKind, CanvasNode, Project
 from app.services.cost_estimator import ESTIMATE_WARNING, evaluate_cost_guard, evaluate_workflow_cost_guard
+from app.services.input_safety import InputSafetyError, safe_upload_path_from_reference
 from app.services.registry import resolve_model_for_node
-from app.services.utility_tools import UTILITY_NODE_TYPES, get_utility_tool
+from app.services.utility_tools import RUNNABLE_LOCAL_UTILITY_NODE_TYPES, UTILITY_NODE_TYPES, get_utility_tool
 
-PROMPT_CARD_ONLY_INPUTS = {"prompt", "text"}
+PROMPT_CARD_ONLY_INPUTS = {"prompt", "text", "negative_prompt"}
 
 
 class WorkflowResolverError(Exception):
@@ -152,7 +153,10 @@ def resolve_inputs_for_node(
                 )
             )
     for input_name, entries in list_entries.items():
-        resolved_inputs[input_name] = ordered_list_values(entries, as_list(resolved_inputs.get(f"{input_name}_order")))
+        deduped_entries = dedupe_list_entries(entries)
+        order = as_list(resolved_inputs.get(f"{input_name}_order"))
+        errors.extend(validate_list_order(input_name, deduped_entries, order, node.id))
+        resolved_inputs[input_name] = ordered_list_values(deduped_entries, order)
     return resolved_inputs, errors
 
 
@@ -226,6 +230,38 @@ def ordered_list_values(entries: list[dict[str, Any]], order: list[Any]) -> list
     ]
 
 
+def dedupe_list_entries(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    seen_values: set[str] = set()
+    deduped: list[dict[str, Any]] = []
+    for entry in entries:
+        value_key = repr(entry.get("value"))
+        if value_key in seen_values:
+            continue
+        seen_values.add(value_key)
+        deduped.append(entry)
+    return deduped
+
+
+def validate_list_order(
+    input_name: str,
+    entries: list[dict[str, Any]],
+    order: list[Any],
+    node_id: str,
+) -> list[dict[str, Any]]:
+    if not order:
+        return []
+    keys = {str(entry["key"]) for entry in entries}
+    order_keys = [str(key) for key in order]
+    errors: list[dict[str, Any]] = []
+    duplicates = sorted({key for key in order_keys if order_keys.count(key) > 1})
+    unknown = [key for key in order_keys if key not in keys]
+    if duplicates:
+        errors.append(error("invalid_list_order", f"{input_name}_order contains duplicate entries.", {"node_id": node_id, "duplicates": duplicates}))
+    if unknown:
+        errors.append(error("invalid_list_order", f"{input_name}_order contains unknown entries.", {"node_id": node_id, "unknown": unknown}))
+    return errors
+
+
 PROMPT_SOURCE_NODE_TYPES = {"prompt_card", "llm_text", "llm_vision", "speech_to_text"}
 
 
@@ -260,10 +296,15 @@ def validate_prompt_card_inputs(node: CanvasNode, graph: Graph) -> list[dict[str
 def prompt_card_only_inputs_for_node(node: CanvasNode) -> set[str]:
     if node.type in UTILITY_NODE_TYPES:
         return set()
+    required: set[str] = set()
     if node.type.value in {"text_to_image", "image_to_image", "reference_to_image", "remove_object", "image_to_video", "start_end_to_video", "text_to_video", "reference_to_video", "talking_avatar", "text_to_3d"}:
-        return {"prompt"}
+        required.add("prompt")
     if node.type.value in {"text_to_speech", "text_to_audio", "generate_voice", "llm_text", "llm_vision"}:
-        return {"text"}
+        required.add("text")
+    if node.inputs.get("negative_prompt"):
+        required.add("negative_prompt")
+    if required:
+        return required
     return set()
 
 
@@ -274,6 +315,7 @@ def build_graph(project: Project) -> Graph:
     edges: list[NormalizedEdge] = []
     incoming = {node_id: [] for node_id in node_index}
     outgoing = {node_id: [] for node_id in node_index}
+    seen_edges: set[tuple[str, str, str, str]] = set()
 
     for index, raw_edge in enumerate(project.edges or []):
         normalized = normalize_edge(raw_edge, index)
@@ -303,6 +345,26 @@ def build_graph(project: Project) -> Graph:
             continue
         if normalized.target_input in {"", "input"}:
             normalized.target_input = default_target_input(node_index[normalized.target_node_id])
+        edge_key = (
+            normalized.source_node_id,
+            normalized.target_node_id,
+            normalized.source_output,
+            normalized.target_input,
+        )
+        if edge_key in seen_edges:
+            warnings.append(
+                warning(
+                    "duplicate_edge",
+                    f"Duplicate edge {normalized.id} was ignored.",
+                    {"edge_id": normalized.id, "source_node_id": normalized.source_node_id, "target_node_id": normalized.target_node_id},
+                )
+            )
+            continue
+        seen_edges.add(edge_key)
+        compatibility_error = validate_edge_media_compatibility(normalized, node_index, project)
+        if compatibility_error:
+            errors.append(compatibility_error)
+            continue
 
         edges.append(normalized)
         outgoing[normalized.source_node_id].append(normalized)
@@ -353,6 +415,74 @@ def default_target_input(node: CanvasNode) -> str:
     if node.type.value in {"speech_to_text", "lip_sync"}:
         return "audio"
     return "input"
+
+
+def validate_edge_media_compatibility(
+    edge: NormalizedEdge,
+    node_index: dict[str, CanvasNode],
+    project: Project,
+) -> dict[str, Any] | None:
+    expected = expected_input_kind(node_index[edge.target_node_id], edge.target_input, project)
+    if expected is None:
+        return None
+    actual = output_kind_for_node(node_index[edge.source_node_id], project)
+    if actual in {None, AssetKind.other} or actual == expected:
+        return None
+    return error(
+        "incompatible_edge_media",
+        f"Edge {edge.id} connects {actual.value} output to {expected.value} input {edge.target_input}.",
+        {
+            "edge_id": edge.id,
+            "source_node_id": edge.source_node_id,
+            "target_node_id": edge.target_node_id,
+            "source_kind": actual.value,
+            "expected_kind": expected.value,
+            "target_input": edge.target_input,
+        },
+    )
+
+
+def expected_input_kind(node: CanvasNode, input_name: str, project: Project) -> AssetKind | None:
+    fields = []
+    utility = get_utility_tool(node.type)
+    if utility:
+        fields = utility.fields
+    else:
+        resolution = resolve_model_for_node(
+            node_type=node.type,
+            node_model_id=node.model_id,
+            project_model_overrides=project.settings.model_overrides,
+        )
+        fields = resolution.model.fields if resolution.model else []
+    for field in fields:
+        if field.name == input_name and getattr(field, "asset_kind", None):
+            return field.asset_kind
+    lowered = input_name.lower()
+    if "image" in lowered or lowered in {"image", "mask"}:
+        return AssetKind.image
+    if "video" in lowered or lowered == "videos":
+        return AssetKind.video
+    if "audio" in lowered:
+        return AssetKind.audio
+    return None
+
+
+def output_kind_for_node(node: CanvasNode, project: Project) -> AssetKind | None:
+    if node.output_asset_ids:
+        asset = find_asset(project.assets, node.output_asset_ids[0])
+        if asset:
+            return asset.kind
+    utility = get_utility_tool(node.type)
+    if utility:
+        return utility.output_kind
+    resolution = resolve_model_for_node(
+        node_type=node.type,
+        node_model_id=node.model_id,
+        project_model_overrides=project.settings.model_overrides,
+    )
+    if resolution.model:
+        return resolution.model.output_kind
+    return None
 
 
 def value_from(obj: Any, *names: str) -> Any:
@@ -471,6 +601,8 @@ def build_step(
     if prompt_errors:
         status = "skipped"
         errors.extend(prompt_errors)
+    elif node.type in RUNNABLE_LOCAL_UTILITY_NODE_TYPES:
+        status = "ready"
     elif node.type in UTILITY_NODE_TYPES:
         status = "utility"
     elif resolution and resolution.error:
@@ -499,8 +631,8 @@ def build_step(
         "index": index,
         "node_id": node.id,
         "node_type": node.type.value,
-        "model_id": resolution.model_id if resolution else None,
-        "effective_model_id": resolution.model_id if resolution else None,
+        "model_id": resolution.model_id if resolution else (model.id if model else None),
+        "effective_model_id": resolution.model_id if resolution else (model.id if model else None),
         "node_model_id": node.model_id,
         "project_override_model_id": project.settings.model_overrides.get(node.type.value),
         "catalog_default_model_id": model.default_model_id if model else None,
@@ -534,7 +666,7 @@ def resolve_source_output(node: CanvasNode, project: Project, target_input: str 
         return utility_output
 
     if node.output_urls:
-        return node.output_urls[0]
+        return usable_output_reference(node.output_urls[0])
 
     text_output = node.last_run.get("text_output") if isinstance(node.last_run, dict) else None
     if isinstance(text_output, str) and text_output.strip():
@@ -544,7 +676,7 @@ def resolve_source_output(node: CanvasNode, project: Project, target_input: str 
     if isinstance(data, dict):
         output_urls = data.get("output_urls")
         if output_urls:
-            return output_urls[0]
+            return usable_output_reference(output_urls[0])
         outputs = data.get("outputs")
         if isinstance(outputs, dict) and outputs.get("image"):
             return outputs["image"]
@@ -554,16 +686,28 @@ def resolve_source_output(node: CanvasNode, project: Project, target_input: str 
         return outputs["image"]
 
     if node.type.value == "upload_image":
-        for input_name in ("asset_url", "image", "audio", "video"):
+        for input_name in ("asset_id", "selected_asset_id", "asset_url", "image", "audio", "video"):
             if node.inputs.get(input_name):
                 return node.inputs[input_name]
 
     if node.output_asset_ids:
         asset = find_asset(project.assets, node.output_asset_ids[0])
         if asset:
-            return asset.wavespeed_url or asset.public_url or asset.local_path
+            return usable_output_reference(asset.wavespeed_url or asset.public_url or asset.local_path)
 
     return None
+
+
+def usable_output_reference(value: str | None) -> str | None:
+    if not value:
+        return None
+    try:
+        upload_path = safe_upload_path_from_reference(value)
+    except InputSafetyError:
+        return None
+    if upload_path is not None and not upload_path.exists():
+        return None
+    return value
 
 
 def resolve_utility_output(node: CanvasNode, project: Project, target_input: str | None = None) -> str | None:
@@ -611,6 +755,8 @@ def find_asset(assets: list[Asset], asset_id: str) -> Asset | None:
 
 
 def is_runnable(node: CanvasNode, project: Project) -> bool:
+    if node.type in RUNNABLE_LOCAL_UTILITY_NODE_TYPES:
+        return True
     if node.type in UTILITY_NODE_TYPES:
         return False
     resolution = resolve_model_for_node(

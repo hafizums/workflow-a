@@ -1,7 +1,9 @@
 import tempfile
 import unittest
 from pathlib import Path
+from uuid import uuid4
 
+from app.core.config import get_settings
 from app.schemas import Asset, AssetKind, Project
 from app.services.node_runner import (
     NodeRunError,
@@ -23,16 +25,26 @@ class FakeAdapter:
 
 class AssetResolutionTests(unittest.IsolatedAsyncioTestCase):
     async def test_local_asset_upload_sets_wavespeed_url_for_reuse(self):
-        with tempfile.NamedTemporaryFile(suffix=".mp3") as file:
+        upload_dir = get_settings().upload_dir
+        upload_dir.mkdir(parents=True, exist_ok=True)
+        path = upload_dir / f"{uuid4().hex}.mp3"
+        path.write_bytes(b"audio")
+        try:
             project = Project(
-                id="project_notvalid",
-                assets=[Asset(id="asset_audio", kind=AssetKind.audio, filename="voice.mp3", local_path=file.name)],
+                assets=[Asset(id="asset_audio", kind=AssetKind.audio, filename="voice.mp3", local_path=str(path))],
             )
             adapter = FakeAdapter()
             resolved = await resolve_audio_input(adapter, {"audio": "asset_audio"}, project)
-            self.assertEqual(resolved, f"https://wavespeed.example/uploads/{Path(file.name).name}")
+            self.assertEqual(resolved, f"https://wavespeed.example/uploads/{path.name}")
             self.assertEqual(project.assets[0].wavespeed_url, resolved)
             self.assertEqual(len(adapter.uploaded_paths), 1)
+        finally:
+            path.unlink(missing_ok=True)
+
+    async def test_raw_local_path_outside_project_assets_is_rejected(self):
+        with tempfile.NamedTemporaryFile(suffix=".mp3") as file:
+            with self.assertRaisesRegex(NodeRunError, "public URL or project audio asset"):
+                await resolve_audio_input(FakeAdapter(), {"audio": file.name}, Project())
 
     async def test_kind_mismatch_has_clear_error(self):
         project = Project(

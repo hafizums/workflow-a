@@ -4,8 +4,10 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
+from app.application.use_cases.errors import ApplicationError
+from app.application.use_cases.project_portability import ProjectPortabilityUseCase
+from app.application.use_cases.project_settings import ProjectSettingsUseCase
 from app.schemas import (
-    CostGuardSettings,
     Project,
     ProjectCreate,
     ProjectDuplicateRequest,
@@ -27,24 +29,16 @@ def project_error(exc: project_store.ProjectStoreError) -> HTTPException:
         return HTTPException(status_code=400, detail=str(exc))
     if isinstance(exc, project_store.ProjectNotFoundError):
         return HTTPException(status_code=404, detail=str(exc))
+    if isinstance(exc, project_store.ProjectStorageSchemaError):
+        return HTTPException(status_code=500, detail=str(exc))
     return HTTPException(status_code=500, detail="Project storage error")
 
 
 def merge_settings(current: ProjectSettings, payload: ProjectSettingsUpdate) -> ProjectSettings:
-    data = current.model_dump()
-    if payload.model_overrides is not None:
-        data["model_overrides"] = payload.model_overrides
-    if payload.cost_guard is not None:
-        cost_guard_data = current.cost_guard.model_dump()
-        cost_guard_data.update(payload.cost_guard.model_dump(exclude_unset=True))
-        try:
-            data["cost_guard"] = CostGuardSettings.model_validate(cost_guard_data)
-        except ValidationError as exc:
-            raise HTTPException(status_code=422, detail=exc.errors()) from exc
     try:
-        return validate_project_settings(ProjectSettings.model_validate(data))
-    except ProjectValidationError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return ProjectSettingsUseCase.merge(current, payload)
+    except ApplicationError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 
 
 @router.get("", response_model=list[Project])
@@ -62,12 +56,7 @@ async def create_project(payload: ProjectCreate):
 async def import_project(request: Request):
     try:
         payload = await read_import_payload(request)
-        return await portable_project.import_project(
-            payload.import_data,
-            name=payload.name,
-            include_outputs=payload.include_outputs,
-            include_run_history=payload.include_run_history,
-        )
+        return await ProjectPortabilityUseCase().import_project(payload)
     except portable_project.PortableProjectError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except json.JSONDecodeError as exc:
@@ -127,11 +116,11 @@ async def export_project(
     include_run_history: bool = False,
 ):
     try:
-        project = await project_store.load_project(project_id)
+        project = await ProjectPortabilityUseCase().load_project(project_id)
     except project_store.ProjectStoreError as exc:
         raise project_error(exc) from exc
 
-    data = portable_project.export_project(
+    data = ProjectPortabilityUseCase().export(
         project,
         include_outputs=include_outputs,
         include_settings=include_settings,
@@ -147,13 +136,7 @@ async def export_project(
 async def duplicate_project(project_id: str, payload: ProjectDuplicateRequest | None = None):
     payload = payload or ProjectDuplicateRequest()
     try:
-        project = await project_store.load_project(project_id)
-        return await portable_project.duplicate_project(
-            project,
-            name=payload.name,
-            include_outputs=payload.include_outputs,
-            include_run_history=payload.include_run_history,
-        )
+        return await ProjectPortabilityUseCase().duplicate_project(project_id, payload)
     except project_store.ProjectStoreError as exc:
         raise project_error(exc) from exc
     except portable_project.PortableProjectError as exc:
@@ -163,22 +146,17 @@ async def duplicate_project(project_id: str, payload: ProjectDuplicateRequest | 
 @router.get("/{project_id}/settings", response_model=ProjectSettings)
 async def get_project_settings(project_id: str):
     try:
-        project = await project_store.load_project(project_id)
-    except project_store.ProjectStoreError as exc:
-        raise project_error(exc) from exc
-    return project.settings
+        return await ProjectSettingsUseCase().get(project_id)
+    except ApplicationError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 
 
 @router.put("/{project_id}/settings", response_model=ProjectSettings)
 async def update_project_settings(project_id: str, payload: ProjectSettingsUpdate):
     try:
-        project = await project_store.load_project(project_id)
-    except project_store.ProjectStoreError as exc:
-        raise project_error(exc) from exc
-
-    project.settings = merge_settings(project.settings, payload)
-    await project_store.save_project(project)
-    return project.settings
+        return await ProjectSettingsUseCase().update(project_id, payload)
+    except ApplicationError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 
 
 @router.put("/{project_id}", response_model=Project)

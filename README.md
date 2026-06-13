@@ -103,6 +103,12 @@ Run local tests:
 python -m pytest
 ```
 
+Run frontend browser smoke tests:
+
+```bat
+npm run test:e2e --prefix frontend
+```
+
 Rebuild the React frontend served by FastAPI:
 
 ```bat
@@ -166,7 +172,7 @@ The MVP supports:
 
 ## V8 UI upgrade
 
-V8 was a UI organization pass. It keeps the vanilla FastAPI/static frontend but reorganizes the interface into **WaveSpeed Studio v8**: a studio layout with grouped command bars, searchable node library, dynamic category filters, canvas stats, a selection strip, tabbed inspector, toast feedback, and safer keyboard shortcuts. Existing project, template, asset, workflow, and run-manager APIs remain unchanged.
+V8 was a UI organization pass. The current frontend has since moved to a React + React Flow source app in `frontend/`, built as static assets served by FastAPI from `web/`. It keeps the same local FastAPI/static deployment shape while providing a studio layout with grouped command bars, searchable node library, dynamic category filters, canvas stats, a selection strip, tabbed inspector, toast feedback, and safer keyboard shortcuts. Existing project, template, asset, workflow, and run-manager APIs remain unchanged.
 
 ## V9 model enablement
 
@@ -176,13 +182,15 @@ The upload node still uses the backward-compatible `upload_image` node type, but
 
 Mask-based models require a supplied mask image in V9. There is no brush, layer, or mask drawing editor.
 
-Some catalog nodes remain disabled until their request fields, response shapes, cost behavior, and product UX are verified.
+V11 expands the model menu beyond the small V9 curated batch. Normal add-node menus load enabled models from `/api/models?enabled_only=true`; catalog rows excluded from runtime are not shown as runnable cards and remain inspectable through `/api/model-catalog/excluded` or `/api/model-catalog?include_excluded=true`.
 
 ## Important implementation notes
 
 Localhost file URLs are usually not reachable by remote AI APIs. For image, audio, or video nodes, use the upload endpoint with `upload_to_wavespeed=true`, then copy the returned `wavespeed_url` into the node input field or select the uploaded asset in the node card.
 
-Enabled model IDs include:
+Cost estimates are local starting estimates, not exact billing. The canvas displays model and workflow estimates in Malaysian Ringgit using the UI-only conversion `USD 1 = RM4.06`; backend API fields, stored project settings, and cost guard thresholds remain USD (`*_usd`).
+
+Curated enabled model IDs include:
 
 ```text
 wavespeed-ai/z-image/turbo
@@ -200,9 +208,9 @@ wavespeed-ai/hunyuan-3d-v3.1/text-to-3d-rapid
 wavespeed-ai/z-image/turbo-inpaint
 ```
 
-Enabled node types include text-to-image, image-to-image/remix, reference-to-image, upscale image, remove background, remove object/inpaint, image-to-video, start-end video, text-to-video, text-to-speech, speech-to-text, generate voice, lip sync, talking avatar, and text-to-3D.
+Curated enabled node types include text-to-image, image-to-image/remix, reference-to-image, upscale image, remove background, remove object/inpaint, image-to-video, start-end video, text-to-video, text-to-speech, speech-to-text, generate voice, lip sync, talking avatar, and text-to-3D.
 
-Disabled/planned node types remain visible with specific reasons: text-to-audio, reference-to-video, video-extend, video-effect, portrait-transfer, and image-to-3D.
+The full catalog adds hundreds of additional enabled `generic_wavespeed` entries. Use `/api/model-catalog/summary` and `/api/models?enabled_only=true` for the current count.
 
 See `docs/V9_MODEL_ENABLEMENT.md` for curl examples for the new runnable models.
 Live dry-runs can be repeated with `python scripts/live_wavespeed_v9_smoke.py --confirm-spend-credits` after setting any required media URL environment variables documented there.
@@ -210,6 +218,28 @@ Live dry-runs can be repeated with `python scripts/live_wavespeed_v9_smoke.py --
 ## V10 Weave-style workflow layer
 
 V10 adds artifact lineage, utility nodes, variant batches, model comparison, winner promotion, branch-from-any-artifact, production recipes, export packages, and run snapshots. AI execution remains WaveSpeed-only; local utility nodes only orchestrate prompts, assets, selection, comparison, and export metadata.
+
+Prompt-like inputs on saved project model nodes are graph-sourced. Write prompt text in a Prompt Card, LLM text/vision node, or transcript node, then connect that output to model prompt/text inputs. The model cards show those prompt fields as connected inputs so prompts stay reusable and branchable instead of being hidden inside one model node.
+
+Current UI reachability: recipes, basic branching, utility nodes, uploads, run history, previews, and workflow runs are available in the React canvas. Variant batches, model comparison sets, artifact winner promotion, export packages, and run snapshot clone/rerun are backend/API-first for now; use the endpoints below when testing those workflows.
+
+Current utility nodes:
+
+| Node | Purpose | Runnable |
+| --- | --- | --- |
+| Prompt Card | Reusable prompt and negative prompt text. | No |
+| Style Card | Reusable visual style and quality notes. | No |
+| Character / Reference Card | Reusable character, product, voice, or reference description. | No |
+| Upload Asset / Asset Input | Select or upload a project asset as graph input. | No |
+| Asset Selector | Select one artifact from upstream outputs or project assets. | No |
+| Compare Board | Collect outputs for review. | No |
+| Variant Batch | Describe local variant fan-out metadata. | No |
+| Reroute | Organize graph connections. | No |
+| Note | Canvas note. | No |
+| Group Frame | Canvas grouping metadata. | No |
+| Export Package | Collect deliverables into export metadata. | No |
+| Video Last Frame | Extract a video's final frame into an image asset. | Yes, local |
+| Stitch Videos | Stitch multiple video assets into one local MP4. | Yes, local |
 
 Useful V10 endpoints:
 
@@ -266,7 +296,7 @@ Exported JSON uses schema `wavespeed_canvas_project_export` version `1`. Exports
 
 ## Visual connections
 
-Node cards show a primary output handle and media input handles such as `image`, `last_image`, `video`, and `audio`. Drag from an output handle to an input handle to create an edge. The app blocks self-loops, exact duplicate edges, obvious cycles, and known incompatible media kinds. Click an edge or label to select it, then use `Delete Selected Edge` or the Delete/Backspace key to remove it.
+Node cards show a primary output handle and media input handles such as `image`, `last_image`, `video`, and `audio`. Drag from an output handle to an input handle, or click an output handle and then click a compatible input handle, to create an edge. The app blocks self-loops, exact duplicate edges, obvious cycles, and known incompatible media kinds. Click an edge or label to select it, then use `Delete Selected Edge` or the Delete/Backspace key to remove it.
 
 Connected inputs show a badge with the upstream source node. Branch buttons remain available as shortcuts and create the same edge shape as manual wiring.
 

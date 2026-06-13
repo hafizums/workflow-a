@@ -1,5 +1,7 @@
 # Codex Tasks - Build Order
 
+This file is historical build order, not the current implementation contract. The current frontend is React + React Flow in `frontend/`, built to static assets in `web/`; see `AGENTS.md`, `README.md`, and `FINAL_PROJECT_CONTEXT.md` for current architecture and validation commands.
+
 ## Phase 0 - Validate Scaffold
 
 1. Install dependencies from `requirements.txt`.
@@ -25,7 +27,7 @@
 
 ## Phase 3 - Real Canvas
 
-1. Keep the vanilla canvas for now.
+1. Historical note: this phase originally kept a vanilla canvas. The current implementation uses React + React Flow.
 2. Support draggable nodes.
 3. Support connecting node outputs to node inputs.
 4. Persist node positions and edges.

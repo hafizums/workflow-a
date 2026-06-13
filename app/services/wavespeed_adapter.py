@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -29,6 +30,7 @@ class WaveSpeedAdapter:
     async def run_model(self, model_id: str, inputs: Dict[str, Any]) -> Dict[str, Any]:
         self.require_api_key()
         clean_inputs = self._clean_inputs(inputs)
+        api_key = os.environ.get("WAVESPEED_API_KEY")
 
         def _run() -> Dict[str, Any]:
             try:
@@ -36,15 +38,14 @@ class WaveSpeedAdapter:
             except ImportError as exc:
                 raise RuntimeError("WaveSpeed SDK is not installed. Run `pip install -r requirements.txt`.") from exc
 
-            client = Client(api_key=os.environ.get("WAVESPEED_API_KEY"))
+            client = Client(api_key=api_key)
             return client.run(model_id, clean_inputs, timeout=36000.0, poll_interval=1.0)
 
         try:
             output = await asyncio.to_thread(_run)
-        except RuntimeError:
-            raise
         except Exception as exc:
-            raise RuntimeError(f"WaveSpeed run failed for {model_id}: {exc}") from exc
+            detail = self._redact_secret(str(exc), api_key)
+            raise RuntimeError(f"WaveSpeed run failed for {model_id}: {detail}") from exc
         if not isinstance(output, dict):
             raise RuntimeError("WaveSpeed returned an unexpected response type.")
         return output
@@ -78,18 +79,9 @@ class WaveSpeedAdapter:
         if not text:
             raise RuntimeError("text is required for LLM requests.")
 
-        image = str(inputs.get("image") or "").strip()
-        if image:
-            content: str | list[dict[str, Any]] = [
-                {"type": "text", "text": text},
-                {"type": "image_url", "image_url": {"url": image}},
-            ]
-        else:
-            content = text
-
         payload = {
             "model": model_id,
-            "messages": [{"role": "user", "content": content}],
+            "messages": [{"role": "user", "content": self._llm_message_content(text, inputs)}],
         }
         headers = {
             "Authorization": f"Bearer {os.environ.get('WAVESPEED_API_KEY')}",
@@ -113,6 +105,33 @@ class WaveSpeedAdapter:
         if not isinstance(output, dict):
             raise RuntimeError("WaveSpeed LLM returned an unexpected response type.")
         return output
+
+    @staticmethod
+    def _llm_message_content(text: str, inputs: Dict[str, Any]) -> str | list[dict[str, Any]]:
+        image_urls = WaveSpeedAdapter._llm_image_urls(inputs)
+        if not image_urls:
+            return text
+        content: list[dict[str, Any]] = [{"type": "text", "text": text}]
+        content.extend({"type": "image_url", "image_url": {"url": image_url}} for image_url in image_urls)
+        return content
+
+    @staticmethod
+    def _llm_image_urls(inputs: Dict[str, Any]) -> list[str]:
+        raw_images = inputs.get("images")
+        if raw_images in (None, ""):
+            raw_images = inputs.get("image")
+        if raw_images in (None, ""):
+            return []
+        if isinstance(raw_images, list):
+            candidates = raw_images
+        else:
+            candidates = str(raw_images).replace(",", "\n").splitlines()
+        urls: list[str] = []
+        for candidate in candidates:
+            url = str(candidate or "").strip()
+            if url:
+                urls.append(url)
+        return list(dict.fromkeys(urls))
 
     @staticmethod
     def extract_output_urls(raw_output: Dict[str, Any]) -> List[str]:
@@ -143,3 +162,10 @@ class WaveSpeedAdapter:
     @staticmethod
     def _clean_inputs(inputs: Dict[str, Any]) -> Dict[str, Any]:
         return {key: value for key, value in inputs.items() if value not in (None, "")}
+
+    @staticmethod
+    def _redact_secret(message: str, secret: str | None) -> str:
+        if secret:
+            message = message.replace(secret, "[redacted]")
+        # Keep common bearer/token-looking fragments out of route-visible errors.
+        return re.sub(r"(?i)(bearer|token|api[_-]?key)([=: ]+)([A-Za-z0-9._\-]{6,})", r"\1\2[redacted]", message)

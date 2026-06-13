@@ -3,9 +3,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
 
 from app.schemas import Asset, AssetKind, ModelSpec, Project, WaveSpeedCatalogField, WaveSpeedCatalogModel
+from app.services.input_safety import InputSafetyError, is_url_private_or_local, require_upload_contained_path
 from app.services.wavespeed_adapter import WaveSpeedAdapter
 
 
@@ -98,7 +98,7 @@ async def resolve_asset_value(
         if asset.wavespeed_url:
             return asset.wavespeed_url
         if asset.local_path:
-            asset.wavespeed_url = await adapter.upload_file(Path(asset.local_path))
+            asset.wavespeed_url = await adapter.upload_file(safe_project_asset_path(asset.local_path, field.name))
             return asset.wavespeed_url
         if asset.public_url:
             if is_private_url(asset.public_url):
@@ -111,11 +111,7 @@ async def resolve_asset_value(
             raise ModelInputResolverError(f"{field.name} uses a localhost/private URL that WaveSpeed cannot fetch.")
         return asset_ref
 
-    path = Path(asset_ref)
-    if path.exists():
-        return await adapter.upload_file(path)
-
-    raise ModelInputResolverError(f"{field.name} must be a project asset ID, public URL, or existing local file path.")
+    raise ModelInputResolverError(f"{field.name} must be a project asset ID or public URL.")
 
 
 def find_asset(project: Project | None, ref: str) -> Asset | None:
@@ -202,9 +198,17 @@ def is_http_url(value: str) -> bool:
 
 
 def is_private_url(value: str) -> bool:
-    parsed = urlparse(value)
-    host = (parsed.hostname or "").lower()
-    return host in {"localhost", "127.0.0.1", "::1"} or host.startswith("192.168.") or host.startswith("10.") or host.startswith("172.16.")
+    return is_url_private_or_local(value)
+
+
+def safe_project_asset_path(value: str, field_name: str) -> Path:
+    try:
+        path = require_upload_contained_path(Path(value))
+    except (OSError, InputSafetyError) as exc:
+        raise ModelInputResolverError(f"Selected asset for {field_name} has an unsafe local file path.") from exc
+    if not path.exists():
+        raise ModelInputResolverError(f"Selected asset for {field_name} local file does not exist.")
+    return path
 
 
 def model_label(model: WaveSpeedCatalogModel | ModelSpec) -> str:

@@ -30,18 +30,21 @@ import {
   RefreshCw,
   Save,
   Search,
+  Trash2,
   Upload,
   WandSparkles,
   Waves,
   X
 } from "lucide-react";
 import "@xyflow/react/dist/style.css";
+import { api } from "./api/client.js";
 import "./styles.css";
 
 const NODE_WIDTH = 360;
 const CANVAS_CONTEXT_MENU_WIDTH = 850;
 const CANVAS_CONTEXT_MENU_HEIGHT = 560;
 const DISPLAY_USD_TO_MYR_RATE = 4.06;
+const AUTOSAVE_DELAY_MS = 1200;
 const FIELD_LINK_INPUTS = new Set([
   "prompt",
   "negative_prompt",
@@ -78,6 +81,7 @@ const FIELD_LINK_INPUTS = new Set([
 const PROMPT_INPUTS = new Set(["prompt", "negative_prompt", "text"]);
 const ASSET_INPUT_TYPES = new Set(["asset_url", "asset_id"]);
 const UTILITY_NODE_TYPES = new Set([
+  "upload_image",
   "prompt_card",
   "style_card",
   "character_card",
@@ -90,9 +94,10 @@ const UTILITY_NODE_TYPES = new Set([
   "group_frame",
   "export_package",
   "video_last_frame",
-  "stitch_video"
+  "stitch_video",
+  "storyboard_panels"
 ]);
-const RUNNABLE_UTILITY_NODE_TYPES = new Set(["video_last_frame", "stitch_video"]);
+const RUNNABLE_UTILITY_NODE_TYPES = new Set(["video_last_frame", "stitch_video", "storyboard_panels"]);
 
 function displayUiText(value) {
   return String(value ?? "")
@@ -138,6 +143,8 @@ function App() {
   const [status, setStatus] = useState("Loading workspace...");
   const [busyNodeId, setBusyNodeId] = useState("");
   const [isSaving, setIsSaving] = useState(false);
+  const [autosaveState, setAutosaveState] = useState("idle");
+  const [lastAutosavedAt, setLastAutosavedAt] = useState(null);
   const [modal, setModal] = useState("");
   const [templates, setTemplates] = useState([]);
   const [recipes, setRecipes] = useState([]);
@@ -145,12 +152,39 @@ function App() {
   const [workflowPlan, setWorkflowPlan] = useState(null);
   const [settingsDraft, setSettingsDraft] = useState(null);
   const [canvasContextMenu, setCanvasContextMenu] = useState(null);
+  const [pendingConnection, setPendingConnection] = useState(null);
   const fileInputRef = useRef(null);
   const importProjectRef = useRef(null);
+  const projectRef = useRef(null);
+  const autosaveTimerRef = useRef(null);
+  const autosaveVersionRef = useRef(0);
+  const autosaveBusyRef = useRef(false);
+  const autosavePromiseRef = useRef(null);
+  const saveInFlightRef = useRef(false);
+
+  useEffect(() => {
+    projectRef.current = project;
+  }, [project]);
 
   useEffect(() => {
     refreshWorkspace();
   }, []);
+
+  useEffect(() => {
+    return () => {
+      if (autosaveTimerRef.current) window.clearTimeout(autosaveTimerRef.current);
+    };
+  }, []);
+
+  useEffect(() => {
+    function handleBeforeUnload(event) {
+      if (autosaveState !== "dirty" && autosaveState !== "saving") return;
+      event.preventDefault();
+      event.returnValue = "";
+    }
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [autosaveState]);
 
   useEffect(() => {
     function handleKeyDown(event) {
@@ -169,16 +203,6 @@ function App() {
     const timer = window.setInterval(() => refreshJobs(false), 1500);
     return () => window.clearInterval(timer);
   }, [jobs]);
-
-  async function api(path, options = {}) {
-    const response = await fetch(path, options);
-    const contentType = response.headers.get("content-type") || "";
-    const body = contentType.includes("application/json") ? await response.json() : await response.text();
-    if (!response.ok) {
-      throw new Error(detailMessage(body) || response.statusText);
-    }
-    return body;
-  }
 
   async function refreshWorkspace() {
     try {
@@ -202,14 +226,18 @@ function App() {
   }
 
   async function loadProject(projectId, announce = true) {
+    cancelPendingAutosave();
     const loaded = await api(`/api/projects/${projectId}`);
     setProject(loaded);
     setSelectedNodeId(loaded.nodes?.[0]?.id || "");
+    setAutosaveState("saved");
+    setLastAutosavedAt(loaded.updated_at ? new Date(loaded.updated_at) : null);
     if (announce) setStatus(`Loaded ${loaded.name}.`);
     return loaded;
   }
 
   async function createProject() {
+    cancelPendingAutosave();
     const created = await api("/api/projects", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -218,32 +246,114 @@ function App() {
     setProject(created);
     setProjects((items) => [created, ...items.filter((item) => item.id !== created.id)]);
     setSelectedNodeId("");
+    setAutosaveState("saved");
+    setLastAutosavedAt(created.updated_at ? new Date(created.updated_at) : new Date());
     setStatus("Created project.");
     return created;
   }
 
-  async function saveProject(nextProject = project) {
+  async function saveProject(nextProject = project, options = {}) {
     if (!nextProject) return null;
+    const { silent = false, autosave = false, version = null } = options;
+    if (autosave && saveInFlightRef.current) return null;
+    saveInFlightRef.current = true;
     setIsSaving(true);
+    if (autosave) setAutosaveState("saving");
     try {
       const saved = await api(`/api/projects/${nextProject.id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(projectPayload(nextProject))
       });
-      setProject(saved);
-      setProjects((items) => [saved, ...items.filter((item) => item.id !== saved.id)]);
-      setStatus("Project saved.");
+      const isCurrentAutosave = !autosave || version === autosaveVersionRef.current;
+      if (isCurrentAutosave) {
+        setProject(saved);
+        setProjects((items) => [saved, ...items.filter((item) => item.id !== saved.id)]);
+        setAutosaveState("saved");
+        setLastAutosavedAt(new Date());
+        if (!silent) setStatus("Project saved.");
+      }
       return saved;
+    } catch (error) {
+      if (autosave && version === autosaveVersionRef.current) setAutosaveState("error");
+      throw error;
     } finally {
+      saveInFlightRef.current = false;
       setIsSaving(false);
     }
   }
 
+  function scheduleAutosave(nextProject) {
+    if (!nextProject?.id) return;
+    autosaveVersionRef.current += 1;
+    const version = autosaveVersionRef.current;
+    setAutosaveState("dirty");
+    if (autosaveTimerRef.current) window.clearTimeout(autosaveTimerRef.current);
+    autosaveTimerRef.current = window.setTimeout(() => {
+      flushAutosave(version);
+    }, AUTOSAVE_DELAY_MS);
+  }
+
+  function cancelPendingAutosave() {
+    if (autosaveTimerRef.current) {
+      window.clearTimeout(autosaveTimerRef.current);
+      autosaveTimerRef.current = null;
+    }
+    autosaveVersionRef.current += 1;
+  }
+
+  function markProjectClean(savedProject = null) {
+    setAutosaveState("saved");
+    const updatedAt = savedProject?.updated_at ? new Date(savedProject.updated_at) : new Date();
+    setLastAutosavedAt(updatedAt);
+  }
+
+  async function flushAutosave(version = autosaveVersionRef.current) {
+    if (autosaveBusyRef.current) return;
+    if (version !== autosaveVersionRef.current) return;
+    const current = projectRef.current;
+    if (!current?.id) return;
+    if (saveInFlightRef.current) {
+      autosaveTimerRef.current = window.setTimeout(() => flushAutosave(version), AUTOSAVE_DELAY_MS);
+      return;
+    }
+    autosaveBusyRef.current = true;
+    const autosavePromise = (async () => {
+      try {
+        const saved = await saveProject(current, { silent: true, autosave: true, version });
+        if (saved && version === autosaveVersionRef.current) {
+          setStatus("Autosaved.");
+        }
+      } catch (error) {
+        if (version === autosaveVersionRef.current) {
+          setStatus(`Autosave failed: ${error.message}`);
+        }
+      } finally {
+        autosaveBusyRef.current = false;
+        autosavePromiseRef.current = null;
+      }
+    })();
+    autosavePromiseRef.current = autosavePromise;
+    await autosavePromise;
+  }
+
+  async function waitForAutosave() {
+    if (autosavePromiseRef.current) {
+      await autosavePromiseRef.current.catch(() => {});
+    }
+  }
+
+  async function saveProjectNow(nextProject = project) {
+    cancelPendingAutosave();
+    await waitForAutosave();
+    return saveProject(nextProject);
+  }
+
+
   async function exportProject() {
     if (!project) return;
     try {
-      const saved = await saveProject(project);
+      const saved = await saveProjectNow(project);
       const response = await fetch(`/api/projects/${saved.id}/export`);
       if (!response.ok) throw new Error(await response.text());
       const blob = await response.blob();
@@ -262,8 +372,10 @@ function App() {
     body.append("file", file);
     try {
       const result = await api("/api/projects/import", { method: "POST", body });
+      cancelPendingAutosave();
       setProject(result.project);
       setSelectedNodeId("");
+      markProjectClean(result.project);
       await refreshProjectList(result.project);
       setStatus(`Imported ${result.project.name}.`);
     } catch (error) {
@@ -278,16 +390,39 @@ function App() {
     const name = window.prompt("Duplicate project name", `Copy of ${displayUiText(project.name || "Workflow")}`);
     if (name === null) return;
     try {
-      const saved = await saveProject(project);
+      const saved = await saveProjectNow(project);
       const result = await api(`/api/projects/${saved.id}/duplicate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: name || undefined, include_outputs: true, include_run_history: false })
       });
+      cancelPendingAutosave();
       setProject(result.project);
       setSelectedNodeId("");
+      markProjectClean(result.project);
       await refreshProjectList(result.project);
       setStatus(`Duplicated ${result.project.name}.`);
+    } catch (error) {
+      setStatus(error.message);
+    }
+  }
+
+  async function deleteProject() {
+    if (!project) return;
+    const projectName = displayUiText(project.name || project.id);
+    if (!window.confirm(`Delete project "${projectName}"? This removes the local project JSON.`)) return;
+    try {
+      await api(`/api/projects/${project.id}`, { method: "DELETE" });
+      const remainingProjects = await api("/api/projects");
+      setProjects(remainingProjects);
+      setSelectedNodeId("");
+      setWorkflowPlan(null);
+      if (remainingProjects.length) {
+        await loadProject(remainingProjects[0].id, false);
+      } else {
+        await createProject();
+      }
+      setStatus(`Deleted ${projectName}.`);
     } catch (error) {
       setStatus(error.message);
     }
@@ -321,8 +456,10 @@ function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: name || undefined })
       });
+      cancelPendingAutosave();
       setProject(created);
       setSelectedNodeId("");
+      markProjectClean(created);
       await refreshProjectList(created);
       setModal("");
       setStatus(`Created project from ${template.name}.`);
@@ -350,7 +487,7 @@ function App() {
     const category = window.prompt("Template category", "image") || "image";
     const tagText = window.prompt("Tags, comma separated", "starter") || "";
     try {
-      const saved = await saveProject(project);
+      const saved = await saveProjectNow(project);
       await api(`/api/templates/from-project/${saved.id}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -385,10 +522,12 @@ function App() {
   async function applyRecipe(recipe) {
     if (!project) return;
     try {
-      const saved = await saveProject(project);
+      const saved = await saveProjectNow(project);
       const updated = await api(`/api/projects/${saved.id}/apply-recipe/${recipe.id}`, { method: "POST" });
+      cancelPendingAutosave();
       setProject(updated);
       setSelectedNodeId(updated.nodes?.[0]?.id || "");
+      markProjectClean(updated);
       setModal("");
       setStatus(`Applied recipe: ${recipe.name}.`);
     } catch (error) {
@@ -405,8 +544,10 @@ function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: name || undefined })
       });
+      cancelPendingAutosave();
       setProject(created);
       setSelectedNodeId(created.nodes?.[0]?.id || "");
+      markProjectClean(created);
       await refreshProjectList(created);
       setModal("");
       setStatus(`Created project from ${recipe.name}.`);
@@ -435,6 +576,7 @@ function App() {
         body: JSON.stringify(settingsDraft)
       });
       setProject((current) => current ? { ...current, settings } : current);
+      markProjectClean(project);
       setModal("");
       setStatus("Project settings saved.");
     } catch (error) {
@@ -447,6 +589,7 @@ function App() {
       if (!current) return current;
       const draft = structuredClone(current);
       mutator(draft);
+      scheduleAutosave(draft);
       return draft;
     });
   }
@@ -538,6 +681,16 @@ function App() {
     [selectedNode, modelById, modelsByNodeType]
   );
 
+  const autosaveText = useMemo(() => {
+    if (autosaveState === "dirty") return "Unsaved changes";
+    if (autosaveState === "saving") return "Autosaving...";
+    if (autosaveState === "error") return "Autosave failed";
+    if (autosaveState === "saved" && lastAutosavedAt) {
+      return `Saved ${lastAutosavedAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+    }
+    return "Autosave ready";
+  }, [autosaveState, lastAutosavedAt]);
+
   const flowNodes = useMemo(() => {
     if (!project) return [];
     return (project.nodes || []).map((node) => ({
@@ -553,15 +706,18 @@ function App() {
         selected: selectedNodeId === node.id,
         busy: busyNodeId === node.id,
         onChange: updateNodeInput,
+        onUploadAssetForNode: uploadAssetForNode,
         onMoveStitchVideo: moveStitchVideoItem,
         onRun: runNode,
         onSelect: setSelectedNodeId,
         onRemove: removeNode,
-        onBranch: branchFromNode
+        onBranch: branchFromNode,
+        pendingConnection,
+        onHandleClick: handleQuickConnect
       },
       style: { width: NODE_WIDTH }
     }));
-  }, [project, modelById, modelsByNodeType, selectedNodeId, busyNodeId]);
+  }, [project, modelById, modelsByNodeType, selectedNodeId, busyNodeId, pendingConnection]);
 
   const flowEdges = useMemo(() => {
     if (!project) return [];
@@ -646,11 +802,52 @@ function App() {
     });
   }, [modelById, modelsByNodeType]);
 
+  function handleQuickConnect(role, nodeId, handleId) {
+    if (role === "source") {
+      setPendingConnection({ source: nodeId, sourceHandle: handleId || "output" });
+      setStatus("Output selected. Click a target input handle to connect.");
+      return;
+    }
+    if (!pendingConnection?.source || pendingConnection.source === nodeId) {
+      setPendingConnection(null);
+      return;
+    }
+    onConnect({
+      source: pendingConnection.source,
+      sourceHandle: pendingConnection.sourceHandle || "output",
+      target: nodeId,
+      targetHandle: handleId || "input"
+    });
+    setPendingConnection(null);
+    setStatus("Connected nodes.");
+  }
+
   function updateNodeInput(nodeId, fieldName, value) {
     updateProject((draft) => {
       const node = draft.nodes.find((item) => item.id === nodeId);
       if (!node) return;
       node.inputs = { ...(node.inputs || {}), [fieldName]: value };
+      if ((node.type === "upload_image" || node.type === "asset_input" || node.type === "asset_selector") && ["asset_id", "selected_asset_id"].includes(fieldName)) {
+        const assetId = String(value || "").trim();
+        const asset = draft.assets?.find((item) => item.id === assetId);
+        const url = assetPreviewUrl(asset);
+        node.output_asset_ids = assetId ? [assetId] : [];
+        node.output_urls = url ? [url] : [];
+        node.status = assetId ? "success" : "idle";
+        node.error_message = null;
+        node.last_run = assetId ? {
+          ok: true,
+          model_id: null,
+          completed_at: new Date().toISOString(),
+          output_urls: node.output_urls,
+          asset_ids: node.output_asset_ids,
+          raw_output: {
+            utility: node.type,
+            asset_id: assetId,
+            filename: asset?.filename || null
+          }
+        } : {};
+      }
       node.updated_at = new Date().toISOString();
     });
   }
@@ -810,7 +1007,7 @@ function App() {
     setBusyNodeId(nodeId);
     setStatus("Saving project before run...");
     try {
-      const saved = await saveProject(project);
+      const saved = await saveProjectNow(project);
       const result = await api("/api/runs/node", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -838,7 +1035,7 @@ function App() {
       });
       const nextProject = structuredClone(project);
       nextProject.assets = [asset, ...(nextProject.assets || [])];
-      const saved = await saveProject(nextProject);
+      const saved = await saveProjectNow(nextProject);
       setProject(saved);
       setStatus(`Uploaded ${asset.filename}.`);
     } catch (error) {
@@ -848,10 +1045,59 @@ function App() {
     }
   }
 
+  async function uploadAssetForNode(nodeId, file, preferredFieldName = "") {
+    if (!file || !project) return;
+    setStatus("Uploading asset for node...");
+    const form = new FormData();
+    form.append("file", file);
+    try {
+      const asset = await api(`/api/assets/upload?upload_to_wavespeed=${uploadToWaveSpeed ? "true" : "false"}`, {
+        method: "POST",
+        body: form
+      });
+      const nextProject = structuredClone(project);
+      nextProject.assets = [asset, ...(nextProject.assets || [])];
+      const node = nextProject.nodes?.find((item) => item.id === nodeId);
+      if (node) {
+        const fieldName = preferredFieldName || (node.type === "asset_selector" ? "selected_asset_id" : "asset_id");
+        const outputUrl = assetPreviewUrl(asset);
+        node.inputs = { ...(node.inputs || {}), [fieldName]: asset.id };
+        if (["upload_image", "asset_input", "asset_selector"].includes(node.type)) {
+          node.output_asset_ids = [asset.id];
+          node.output_urls = outputUrl ? [outputUrl] : [];
+          node.status = "success";
+          node.error_message = null;
+          node.last_run = {
+            ok: true,
+            model_id: null,
+            completed_at: new Date().toISOString(),
+            output_urls: node.output_urls,
+            asset_ids: node.output_asset_ids,
+            raw_output: {
+              utility: node.type,
+              asset_id: asset.id,
+              filename: asset.filename,
+              uploaded_to_cloud: Boolean(asset.wavespeed_url)
+            }
+          };
+        } else {
+          node.error_message = null;
+        }
+        node.updated_at = new Date().toISOString();
+      }
+      const saved = await saveProjectNow(nextProject);
+      setProject(saved);
+      setSelectedNodeId(nodeId);
+      setStatus(`Uploaded ${asset.filename}.`);
+    } catch (error) {
+      setStatus(error.message);
+    }
+  }
+
   async function runWorkflow(mode) {
     if (!project) return;
     try {
-      const saved = await saveProject(project);
+      const saved = await saveProjectNow(project);
       const endpoint =
         mode === "all"
           ? `/api/workflows/${saved.id}/run-all`
@@ -877,7 +1123,7 @@ function App() {
   async function previewWorkflowPlan(mode = "whole_graph") {
     if (!project) return;
     try {
-      const saved = await saveProject(project);
+      const saved = await saveProjectNow(project);
       const params = new URLSearchParams({ mode });
       if (mode !== "whole_graph" && selectedNodeId) params.set("node_id", selectedNodeId);
       const plan = await api(`/api/workflows/${saved.id}/plan?${params}`);
@@ -898,7 +1144,7 @@ function App() {
       return;
     }
     try {
-      const saved = await saveProject(project);
+      const saved = await saveProjectNow(project);
       const endpoint =
         mode === "whole_graph"
           ? "/api/jobs/workflow/all"
@@ -996,7 +1242,7 @@ function App() {
                 <button type="button" onClick={createProject}>
                   <Plus size={16} /> New
                 </button>
-                <button type="button" onClick={() => saveProject()} disabled={isSaving}>
+                <button type="button" onClick={() => saveProjectNow()} disabled={isSaving}>
                   {isSaving ? <Loader2 className="spin" size={16} /> : <Save size={16} />} Save
                 </button>
                 <button type="button" onClick={refreshWorkspace}>
@@ -1005,6 +1251,9 @@ function App() {
                 <a href="/docs" target="_blank" rel="noreferrer">
                   API Docs
                 </a>
+                <button className="danger-action" type="button" onClick={deleteProject}>
+                  <Trash2 size={16} /> Delete
+                </button>
               </div>
               <label>
                 Name
@@ -1136,10 +1385,10 @@ function App() {
             <div className="compact-stack">
               <label className="check-row">
                 <input type="checkbox" checked={uploadToWaveSpeed} onChange={(event) => setUploadToWaveSpeed(event.target.checked)} />
-                Upload to Cloud
+                Also upload to Cloud
               </label>
               <button type="button" onClick={() => fileInputRef.current?.click()}>
-                <Upload size={16} /> Upload Asset
+                <Upload size={16} /> Upload from Local
               </button>
               <input ref={fileInputRef} className="hidden" type="file" onChange={(event) => uploadAsset(event.target.files?.[0])} />
               <AssetList assets={project.assets || []} />
@@ -1197,7 +1446,13 @@ function App() {
           )}
         </div>
 
-        <footer className="status-bar">{status}</footer>
+        <footer className="status-bar">
+          <span className="status-message">{status}</span>
+          <span className={`autosave-indicator autosave-${autosaveState}`}>
+            {autosaveState === "saving" && <Loader2 className="spin" size={13} />}
+            <span>{autosaveText}</span>
+          </span>
+        </footer>
       </section>
 
       {selectedNode && !UTILITY_NODE_TYPES.has(selectedNode.type) && (
@@ -1342,6 +1597,9 @@ function SettingsModal({ open, settings, models, onChange, onClose, onSave }) {
       <div className="settings-grid-panel">
         <section className="modal-section">
           <h3>Cost Guard</h3>
+          <p className="settings-note">
+            Canvas estimates are displayed in RM at a UI-only rate of USD 1 = RM{DISPLAY_USD_TO_MYR_RATE.toFixed(2)}. Cost guard thresholds are still entered and evaluated in USD.
+          </p>
           <label className="check-row">
             <input type="checkbox" checked={Boolean(costGuard.enabled)} onChange={(event) => updateCost("enabled", event.target.checked)} />
             Enable cost guard
@@ -1491,7 +1749,7 @@ function Modal({ title, subtitle, children, onClose }) {
 }
 
 function WorkflowCard({ data }) {
-  const { node, model, assets, nodes, edges, selected, busy, onChange, onMoveStitchVideo, onRun, onSelect, onRemove, onBranch } = data;
+  const { node, model, assets, nodes, edges, selected, busy, onChange, onUploadAssetForNode, onMoveStitchVideo, onRun, onSelect, onRemove, onBranch, pendingConnection, onHandleClick } = data;
   const fields = model?.fields || [];
   const linkableFields = fields.filter(isConnectableField);
   const hasSpecificInputs = linkableFields.length > 0;
@@ -1505,10 +1763,28 @@ function WorkflowCard({ data }) {
   const handleGap = 24;
   const outputHandleTop = 62;
   const minHandleHeight = Math.max(outputHandleTop, hasSpecificInputs ? handleBaseTop + (linkableFields.length - 1) * handleGap : outputHandleTop) + 14;
+  const pendingSource = pendingConnection?.source === node.id && (pendingConnection?.sourceHandle || "output") === "output";
+  const canQuickConnectTarget = Boolean(pendingConnection?.source) && pendingConnection.source !== node.id;
 
   return (
     <article className={`workflow-node ${selected ? "selected" : ""}`} style={{ minHeight: minHandleHeight }} onClick={() => onSelect(node.id)}>
-      {!hasSpecificInputs && <Handle type="target" position={Position.Left} id="input" style={{ top: outputHandleTop }} />}
+      {!hasSpecificInputs && (
+        <Handle
+          type="target"
+          position={Position.Left}
+          id="input"
+          style={{ top: outputHandleTop }}
+          className={canQuickConnectTarget ? "handle-connectable-target" : ""}
+          data-testid={`node-handle-${node.id}-input-target`}
+          aria-label={`${node.title} input handle`}
+          onPointerDown={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            onHandleClick?.("target", node.id, "input");
+          }}
+          onClick={(event) => event.stopPropagation()}
+        />
+      )}
       <header className="node-header">
         <div className="drag-handle">::</div>
         <ProviderBadge provider={providerForModel(model || node)} />
@@ -1533,6 +1809,7 @@ function WorkflowCard({ data }) {
                   assets={assets}
                   value={node.inputs?.[field.name] ?? field.default ?? defaultValueForField(field)}
                   onChange={(value) => onChange(node.id, field.name, value)}
+                  onUpload={(file, fieldName) => onUploadAssetForNode?.(node.id, file, fieldName)}
                 />
               )}
               {node.type === "stitch_video" && field.name === "videos" && (
@@ -1573,12 +1850,35 @@ function WorkflowCard({ data }) {
             id={field.name}
             position={Position.Left}
             style={{ top: handleBaseTop + index * handleGap }}
+            className={canQuickConnectTarget ? "handle-connectable-target" : ""}
+            data-testid={`node-handle-${node.id}-${field.name}-target`}
+            aria-label={`${node.title} ${field.name} input handle`}
+            onPointerDown={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              onHandleClick?.("target", node.id, field.name);
+            }}
+            onClick={(event) => event.stopPropagation()}
           />
           <HandleLabel side="left" top={handleBaseTop + index * handleGap} label={field.name} />
         </React.Fragment>
       ))}
       <HandleLabel side="right" top={outputHandleTop} label="output" />
-      <Handle type="source" position={Position.Right} id="output" style={{ top: outputHandleTop }} />
+      <Handle
+        type="source"
+        position={Position.Right}
+        id="output"
+        style={{ top: outputHandleTop }}
+        className={pendingSource ? "handle-pending-source" : ""}
+        data-testid={`node-handle-${node.id}-output-source`}
+        aria-label={`${node.title} output handle`}
+        onPointerDown={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          onHandleClick?.("source", node.id, "output");
+        }}
+        onClick={(event) => event.stopPropagation()}
+      />
     </article>
   );
 }
@@ -1641,7 +1941,7 @@ function HandleLabel({ side, top, label }) {
   );
 }
 
-function NodeField({ node, field, assets, value, onChange, showDescription = false }) {
+function NodeField({ node, field, assets, value, onChange, onUpload = null, showDescription = false }) {
   const isPromptLocked = PROMPT_INPUTS.has(field.name) && !UTILITY_NODE_TYPES.has(node.type);
   const label = `${field.name}${field.required ? " *" : ""}`;
   const compatibleAssets = assets.filter((asset) => !field.asset_kind || asset.kind === field.asset_kind);
@@ -1701,8 +2001,10 @@ function NodeField({ node, field, assets, value, onChange, showDescription = fal
         </label>
       );
     }
+    const uploadInputId = `upload-${node.id}-${field.name}`;
+    const canUpload = Boolean(onUpload) && !isListInputField(field);
     return (
-      <label className="field">
+      <div className="field asset-picker-field">
         <FieldLabel label={label} description={description} />
         <select value={value ?? ""} onChange={(event) => onChange(event.target.value)}>
           <option value="">Connected input or select asset</option>
@@ -1712,7 +2014,24 @@ function NodeField({ node, field, assets, value, onChange, showDescription = fal
             </option>
           ))}
         </select>
-      </label>
+        {canUpload && (
+          <div className="asset-picker-actions">
+            <button type="button" onClick={() => document.getElementById(uploadInputId)?.click()}>
+              <Upload size={14} /> Upload from Local
+            </button>
+            <input
+              id={uploadInputId}
+              className="hidden"
+              type="file"
+              accept={field.accept || undefined}
+              onChange={(event) => {
+                onUpload(event.target.files?.[0], field.name);
+                event.target.value = "";
+              }}
+            />
+          </div>
+        )}
+      </div>
     );
   }
 
@@ -1847,22 +2166,59 @@ function PromptOptimizerControls({ node, onChange }) {
 
 function OutputPreview({ node, assets }) {
   const urls = [...(node.output_urls || [])];
-  for (const assetId of node.output_asset_ids || []) {
+  const selectedAssetIds = [
+    ...(node.output_asset_ids || []),
+    node.inputs?.asset_id,
+    node.inputs?.selected_asset_id
+  ].filter(Boolean);
+  for (const assetId of selectedAssetIds) {
     const asset = assets.find((item) => item.id === assetId);
-    const url = asset?.public_url || asset?.wavespeed_url;
+    const url = assetPreviewUrl(asset);
     if (url && !urls.includes(url)) urls.push(url);
   }
   const textOutput = node.last_run?.text_output;
   const structuredOutput = node.last_run?.structured_output;
-  if (!urls.length && !textOutput && !structuredOutput) return null;
+  const rawOutput = node.last_run?.raw_output;
+  const hasRawOutput = rawOutput && (typeof rawOutput !== "object" || Object.keys(rawOutput).length > 0);
+  if (!urls.length && !textOutput && !structuredOutput && !hasRawOutput) return null;
 
   return (
     <div className="output-preview">
       {urls.map((url) => (
-        <PreviewMedia key={url} url={url} />
+        <OutputItem key={url} url={url} />
       ))}
       {textOutput && <pre>{textOutput}</pre>}
       {structuredOutput && <pre>{JSON.stringify(structuredOutput, null, 2)}</pre>}
+      {hasRawOutput && (
+        <details className="raw-output">
+          <summary>Raw response</summary>
+          <pre>{typeof rawOutput === "string" ? rawOutput : JSON.stringify(rawOutput, null, 2)}</pre>
+        </details>
+      )}
+    </div>
+  );
+}
+
+function assetPreviewUrl(asset) {
+  return asset?.public_url || asset?.wavespeed_url || asset?.local_path || "";
+}
+
+function OutputItem({ url }) {
+  const filename = url.split(/[?#]/)[0].split("/").filter(Boolean).pop() || "output";
+  return (
+    <div className="output-item">
+      <PreviewMedia url={url} />
+      <div className="output-actions">
+        <a href={url} target="_blank" rel="noreferrer">
+          Open
+        </a>
+        <button type="button" onClick={() => navigator.clipboard?.writeText(url)}>
+          Copy URL
+        </button>
+        <a href={url} download={filename}>
+          Download
+        </a>
+      </div>
     </div>
   );
 }
@@ -2030,6 +2386,7 @@ function resolveNodeModel(node, modelById, modelsByNodeType) {
 }
 
 function normalizeTargetHandle(handle, targetNode, targetModel) {
+  if (targetNode?.type === "image_to_image" && handle === "reference_image") return "image";
   if (handle && handle !== "input") return handle;
   const fields = targetModel?.fields || [];
   const preferred = [
@@ -2185,8 +2542,10 @@ function defaultTargetInputForType(nodeType) {
   if (["text_to_image", "text_to_video", "text_to_3d"].includes(nodeType)) return "prompt";
   if (["llm_text", "llm_vision", "text_to_speech", "text_to_audio"].includes(nodeType)) return "text";
   if (["reference_to_image", "reference_to_video"].includes(nodeType)) return "reference_image";
+  if (nodeType === "image_to_image") return "image";
   if (nodeType === "stitch_video") return "videos";
   if (nodeType === "video_last_frame") return "video";
+  if (nodeType === "storyboard_panels") return "image";
   if (nodeType === "video_extend") return "video";
   if (nodeType.includes("video_effect")) return "image";
   if (nodeType.includes("image") || nodeType.includes("background")) return "image";

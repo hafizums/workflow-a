@@ -1,0 +1,2 @@
+"""Domain result objects."""
+

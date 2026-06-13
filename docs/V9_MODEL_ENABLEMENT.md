@@ -1,6 +1,6 @@
 # V9 Model Enablement
 
-V9 enabled a first batch of additional WaveSpeed model workflows while keeping disabled categories explicit. V11 now adds a catalog-driven runtime on top of those curated nodes, so many models that were previously planned/disabled are available as `generic_wavespeed` catalog models. All examples use placeholder URLs and no secrets. Set `WAVESPEED_API_KEY` in the environment before live runs.
+V9 enabled a first batch of additional WaveSpeed model workflows. V11 now adds a catalog-driven runtime on top of those curated nodes, so many models that were previously planned are available as enabled `generic_wavespeed` catalog models. All examples use placeholder URLs and no secrets. Set `WAVESPEED_API_KEY` in the environment before live runs.
 
 Localhost URLs are not reachable by WaveSpeed. Upload local files with `upload_to_wavespeed=true` or use public HTTPS URLs.
 
@@ -197,16 +197,16 @@ curl -X POST http://localhost:8000/api/runs/node \
   }'
 ```
 
-## Still Disabled
+## V11 Catalog Policy
 
-These remain intentionally disabled until their fields, response shape, cost behavior, and UX are verified:
+Normal add-node menus use `/api/models?enabled_only=true` and show enabled curated/catalog models. Catalog rows excluded from runtime are not shown as runnable add-node cards; inspect them through:
 
-- `text_to_audio`
-- `reference_to_video`
-- `video_extend`
-- `video_effect`
-- `portrait_transfer`
-- `image_to_3d`
+```text
+GET /api/model-catalog/excluded
+GET /api/model-catalog?include_excluded=true
+```
+
+Do not invent request parameters for a model that is not represented by verified registry or catalog schema metadata.
 
 ## Live Smoke Helper
 

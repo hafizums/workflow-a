@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
 
-from app.schemas import CanvasNode, RunJob
+from app.schemas import CanvasNode, RunJob, new_id
 from app.services import project_store
 from app.services.run_manager import RunManagerError, run_manager
 
@@ -43,7 +43,10 @@ async def clone_run_node(project_id: str, run_id: str):
         if node is None:
             raise HTTPException(status_code=404, detail="Run source node not found")
         clone = node.model_copy(deep=True)
-        clone.id = f"{node.id}_clone_{len(project.nodes) + 1}"
+        existing_node_ids = {item.id for item in project.nodes}
+        clone.id = new_id("node")
+        while clone.id in existing_node_ids:
+            clone.id = new_id("node")
         clone.title = f"{node.title} Clone"
         clone.x = node.x + 340
         clone.y = node.y + 40

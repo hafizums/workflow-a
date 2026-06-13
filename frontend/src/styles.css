@@ -376,6 +376,17 @@ textarea {
   background: #0f172a;
 }
 
+.react-flow__handle.handle-pending-source {
+  background: #22c55e;
+  box-shadow: 0 0 0 5px rgba(34, 197, 94, 0.18);
+  pointer-events: none !important;
+}
+
+.handle-connectable-target {
+  border-color: #67e8f9;
+  box-shadow: 0 0 0 5px rgba(103, 232, 249, 0.14);
+}
+
 .handle-label {
   position: absolute;
   z-index: 4;
@@ -928,6 +939,17 @@ textarea {
   width: 100%;
   min-height: 38px;
   justify-content: center;
+}
+
+.danger-action {
+  border-color: #7f1d1d;
+  background: #2a1013;
+  color: #fecaca;
+}
+
+.danger-action:hover {
+  border-color: #ef4444;
+  background: #3a1216;
 }
 
 .node-library,
@@ -1508,6 +1530,11 @@ textarea {
   gap: 6px;
 }
 
+.output-item {
+  display: grid;
+  gap: 6px;
+}
+
 .output-preview img,
 .output-preview video {
   width: 100%;
@@ -1528,6 +1555,45 @@ textarea {
   border: 1px solid #283342;
   border-radius: 8px;
   padding: 10px;
+}
+
+.asset-picker-field {
+  display: grid;
+  gap: 6px;
+}
+
+.asset-picker-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.asset-picker-actions button {
+  min-height: 30px;
+  padding: 0 9px;
+  border-radius: 7px;
+  font-size: 12px;
+}
+
+.output-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.output-actions button,
+.output-actions a {
+  min-height: 28px;
+  padding: 0 9px;
+  border-radius: 7px;
+  font-size: 11px;
+}
+
+.raw-output summary {
+  cursor: pointer;
+  color: #bfdbfe;
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .node-actions {
@@ -1717,6 +1783,13 @@ textarea {
   align-content: start;
 }
 
+.settings-note {
+  margin: 0;
+  color: #9fb2c8;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 .override-list {
   display: grid;
   gap: 10px;
@@ -1742,13 +1815,45 @@ textarea {
 .status-bar {
   display: flex;
   align-items: center;
+  justify-content: space-between;
+  gap: 16px;
   padding: 0 14px;
   color: #b8c7d9;
   border-top: 1px solid #283342;
   background: #0f151c;
   overflow: hidden;
   white-space: nowrap;
+}
+
+.status-message {
+  min-width: 0;
+  overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.autosave-indicator {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  color: #9fb2c8;
+  font-size: 12px;
+}
+
+.autosave-dirty {
+  color: #facc15;
+}
+
+.autosave-saving {
+  color: #93c5fd;
+}
+
+.autosave-saved {
+  color: #86efac;
+}
+
+.autosave-error {
+  color: #fca5a5;
 }
 
 .boot {

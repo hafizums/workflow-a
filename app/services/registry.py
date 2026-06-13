@@ -65,6 +65,14 @@ CATEGORY_METADATA: dict[str, dict[str, object]] = {
 }
 
 VERIFIED_FIELDS_BY_NODE_TYPE: dict[NodeType, list[ModelField]] = {
+    NodeType.upload_image: [
+        ModelField(
+            name="asset_id",
+            type="asset_id",
+            required=True,
+            description="Project asset selected or uploaded from this node.",
+        ),
+    ],
     NodeType.text_to_image: [
         ModelField(name="prompt", type="textarea", required=True, description="Image prompt."),
         ModelField(
@@ -437,12 +445,12 @@ VERIFIED_FIELDS_BY_NODE_TYPE: dict[NodeType, list[ModelField]] = {
     NodeType.llm_vision: [
         ModelField(name="text", type="textarea", required=True, description="Text prompt for the LLM."),
         ModelField(
-            name="image",
-            type="asset_url",
+            name="images",
+            type="asset_url_list",
             asset_kind=AssetKind.image,
             required=False,
             accept="image/*",
-            description="Optional image context for vision-capable LLM requests.",
+            description="Optional image context for vision-capable LLM requests. Connect or select one or more images.",
         ),
     ],
 }

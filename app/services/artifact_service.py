@@ -62,8 +62,19 @@ def rate_artifact(project: Project, asset_id: str, rating: int | None) -> Asset:
     return asset
 
 
-def artifact_lineage_tree(project: Project, asset_id: str) -> dict[str, Any]:
+def artifact_lineage_tree(project: Project, asset_id: str, visited: set[str] | None = None) -> dict[str, Any]:
+    visited = visited or set()
     asset = get_artifact(project, asset_id)
+    if asset.id in visited:
+        return {
+            "asset_id": asset.id,
+            "filename": asset.filename,
+            "kind": asset.kind.value,
+            "role": asset.view.role.value,
+            "cycle_detected": True,
+            "upstream_assets": [],
+        }
+    visited.add(asset.id)
     source_node = next((node for node in project.nodes if node.id == asset.lineage.source_node_id), None)
     source_assets = [
         item
@@ -71,7 +82,7 @@ def artifact_lineage_tree(project: Project, asset_id: str) -> dict[str, Any]:
         if item.id in set(asset.lineage.source_artifact_ids or [])
     ]
     upstream = [
-        artifact_lineage_tree(project, item.id)
+        artifact_lineage_tree(project, item.id, set(visited))
         for item in source_assets
         if item.id != asset.id
     ]

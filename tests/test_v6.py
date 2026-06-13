@@ -119,7 +119,8 @@ class EdgeCompatibilityTests(unittest.TestCase):
         )
         plan = build_workflow_plan(project)
         self.assertTrue(plan["ok"], plan["errors"])
-        self.assertEqual(len(plan["steps"][1]["incoming_edges"]), 3)
+        self.assertEqual(len(plan["steps"][1]["incoming_edges"]), 2)
+        self.assertEqual(plan["warnings"][0]["code"], "duplicate_edge")
 
     def test_export_import_clone_preserves_v6_edge_fields(self):
         project = Project(
